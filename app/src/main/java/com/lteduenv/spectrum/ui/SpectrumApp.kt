@@ -287,7 +287,7 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
         onDismissRequest = onDismiss,
         title = { Text("Settings") },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
                     value = centerText,
                     onValueChange = { centerText = it },
@@ -318,12 +318,6 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                         modifier = Modifier.weight(1f),
                     )
                 }
-                Text(
-                    "RBW은 USB SDR 모드에서 실제 FFT 해상도를 바꿉니다 (좁을수록 정밀, 대신 갱신 느려짐). " +
-                        "VBW를 RBW보다 좁게 주면 트레이스가 스무딩되고, VBW ≥ RBW면 스무딩 없음 (기본값).",
-                    fontSize = 11.sp,
-                    color = AnalyzerColors.TextSecondary,
-                )
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = refText,
@@ -337,12 +331,6 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                     onValueChange = { refOffsetText = it },
                     label = { Text("Ref level offset (dB)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                )
-                Text(
-                    "모니터 포트 Loss + 측정 케이블 Loss 합산값을 마이너스로 입력하면, 트레이스/마커가 " +
-                        "실제 안테나단 기준 dBm으로 보정되어 표시됩니다 (예: 40dB 포트 + 3dB 케이블 = -43).",
-                    fontSize = 11.sp,
-                    color = AnalyzerColors.TextSecondary,
                 )
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -384,14 +372,6 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                 }
                 if (sourceMode == DataSourceMode.USB_SDR) {
                     Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Spectrum only - RTL-SDR/HackRF dongles are receive-only, so VSWR/DTF/Cable Loss stay simulated. " +
-                            "Span above is ignored: each dongle always captures its fixed sample-rate bandwidth " +
-                            "(~2.4 MHz for RTL-SDR, 8 MHz for HackRF) around the center frequency.",
-                        fontSize = 11.sp,
-                        color = AnalyzerColors.TextSecondary,
-                    )
-                    Spacer(Modifier.height(8.dp))
                     Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                         Text("Preamp (HackRF only)", fontSize = 12.sp, color = AnalyzerColors.TextSecondary)
                         Switch(
@@ -399,13 +379,6 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                             onCheckedChange = viewModel::setPreampEnabled,
                         )
                     }
-                    Text(
-                        "Boosts sensitivity for weak signals (~+14dB front-end amp) at the cost of headroom - " +
-                            "turn it off if a strong nearby signal starts clipping/flattening at the top of the trace. " +
-                            "No effect on RTL-SDR, which always runs automatic gain.",
-                        fontSize = 11.sp,
-                        color = AnalyzerColors.TextSecondary,
-                    )
                     Spacer(Modifier.height(8.dp))
                     Button(onClick = viewModel::connectUsbSdr) { Text("Connect USB SDR") }
                     state.sourceStatusMessage?.let {

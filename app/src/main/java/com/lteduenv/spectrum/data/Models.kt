@@ -5,7 +5,7 @@ enum class LinkDirection { TX, RX }
 
 /** Which screen of the instrument is currently active, mirrors the tabs on the photographed unit. */
 enum class MeasurementMode(val label: String) {
-    SPECTRUM("5G/LTE"),
+    SPECTRUM("LTE"),
     VSWR("VSWR"),
     DTF("DTF"),
     CABLE_LOSS("Cable Loss"),
@@ -32,25 +32,14 @@ data class BandPreset(
 
 object BandPresets {
     val all = listOf(
-        // LTE B3 (1.8GHz) and B8 (900MHz) values below are the real deployed channel plan from
-        // KT's own MS2090A field-instrument training material (ROU DL/UL measurement steps),
-        // not a generic 3GPP band-plan guess: FREQ/SPAN screenshots gave exact center frequencies
-        // and the SPAN to use for each channel width.
+        // LTE only for now, per KT's own MS2090A field-instrument training material (ROU DL/UL
+        // measurement steps) - real deployed channel plan, not a generic 3GPP band-plan guess.
         // LTE1.8 has two channel-width configs in that material - both kept as separate presets
-        // since they tune to different center frequencies.
+        // since they tune to different center frequencies. B1 and NR n78 dropped: neither was in
+        // that material, so both were unconfirmed guesses.
         BandPreset("lte_b3_30m", "LTE B3 (30M)", "LTE", downlinkMhz = 1845.0, uplinkMhz = 1750.0, spanMhz = 35.0),
         BandPreset("lte_b3_20m", "LTE B3 (20M)", "LTE", downlinkMhz = 1840.0, uplinkMhz = 1745.0, spanMhz = 25.0),
         BandPreset("lte_b8", "LTE B8 (900)", "LTE", downlinkMhz = 954.3, uplinkMhz = 909.3, spanMhz = 15.0),
-        // LTE B1 wasn't in that material - still the generic 3GPP band-plan center, not confirmed
-        // against KT's actual deployed channel like B3/B8 above are. Correct it if it's off.
-        BandPreset("lte_b1", "LTE B1", "LTE", downlinkMhz = 2140.0, uplinkMhz = 1950.0, spanMhz = 60.0),
-        // KT's 5G NR n78 slice from Korea's 2018 spectrum auction: 3.50-3.60 GHz (100 MHz), TDD
-        // so uplink/downlink share the same frequency. This is public auction-record data, not
-        // confirmed against KT's actual deployed channel plan like B3/B8 above are.
-        // KT's 28 GHz mmWave allocation (n257, 28.9-29.7 GHz - *not* "n28", a different, unrelated
-        // low-band FDD band number) isn't included: RTL-SDR/HackRF only tune up to ~6 GHz, so it
-        // physically can't be captured with this hardware.
-        BandPreset("nr_n78", "NR n78", "5G NR", downlinkMhz = 3550.0, uplinkMhz = 3550.0, spanMhz = 100.0),
     )
 }
 
