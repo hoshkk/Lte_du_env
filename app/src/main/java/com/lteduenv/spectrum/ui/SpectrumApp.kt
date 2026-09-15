@@ -201,7 +201,6 @@ private fun BottomInfoBar(state: SpectrumUiState) {
     ) {
         InfoField("Center", "%.2f MHz".format(config.centerMhz))
         InfoField("Span", "%.2f MHz".format(displaySpanMhz))
-        InfoField("Ref", "%.1f dBm".format(config.refLevelDbm))
         if (config.refLevelOffsetDb != 0.0) {
             InfoField("Offset", "%.1f dB".format(config.refLevelOffsetDb))
         }
@@ -277,7 +276,6 @@ private fun CableLossPanel(state: SpectrumUiState, viewModel: SpectrumViewModel)
 private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel, onDismiss: () -> Unit) {
     var centerText by remember(state.config.centerMhz) { mutableStateOf(state.config.centerMhz.toString()) }
     var spanText by remember(state.config.spanMhz) { mutableStateOf(state.config.spanMhz.toString()) }
-    var refText by remember(state.config.refLevelDbm) { mutableStateOf(state.config.refLevelDbm.toString()) }
     var refOffsetText by remember(state.config.refLevelOffsetDb) { mutableStateOf(state.config.refLevelOffsetDb.toString()) }
     var rbwText by remember(state.config.rbwKhz) { mutableStateOf(state.config.rbwKhz.toString()) }
     var vbwText by remember(state.config.vbwKhz) { mutableStateOf(state.config.vbwKhz.toString()) }
@@ -319,13 +317,6 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                         modifier = Modifier.weight(1f),
                     )
                 }
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = refText,
-                    onValueChange = { refText = it },
-                    label = { Text("Ref level (dBm)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                )
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = refOffsetText,
@@ -395,7 +386,6 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                 spanText.toDoubleOrNull()?.let(viewModel::setSpanMhz)
                 rbwText.toDoubleOrNull()?.let(viewModel::setRbwKhz)
                 vbwText.toDoubleOrNull()?.let(viewModel::setVbwKhz)
-                refText.toDoubleOrNull()?.let(viewModel::setRefLevelDbm)
                 refOffsetText.toDoubleOrNull()?.let(viewModel::setRefLevelOffsetDb)
                 if (sourceMode != DataSourceMode.USB_SDR) {
                     viewModel.applyDataSource(sourceMode, baseUrl)
