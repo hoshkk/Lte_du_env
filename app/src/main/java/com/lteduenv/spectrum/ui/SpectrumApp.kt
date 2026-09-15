@@ -92,6 +92,10 @@ fun SpectrumApp(viewModel: SpectrumViewModel = viewModel()) {
                 }
             }
 
+            if (state.mode == MeasurementMode.SPECTRUM) {
+                Spacer(Modifier.height(6.dp))
+                ChannelPowerBar(state)
+            }
             Spacer(Modifier.height(6.dp))
             BottomInfoBar(state)
         }
@@ -177,6 +181,25 @@ private fun MarkerRow(
             Text("Peak", fontSize = 12.sp)
         }
         Button(onClick = onClear) { Text("Clear", fontSize = 12.sp) }
+    }
+}
+
+/** MEASURE > Channel Power readout: total integrated power over the Integration BW, plus its PSD. */
+@Composable
+private fun ChannelPowerBar(state: SpectrumUiState) {
+    val channelPowerDbm = state.channelPowerDbm ?: return
+    val integrationBwMhz = state.config.integrationBwMhz
+    val psdDbmPerMhz = channelPowerDbm - 10.0 * kotlin.math.log10(integrationBwMhz)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(AnalyzerColors.Panel, MaterialTheme.shapes.small)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        InfoField("Total Ch Power", "%.2f dBm".format(channelPowerDbm))
+        InfoField("PSD", "%.2f dBm/MHz".format(psdDbmPerMhz))
+        InfoField("Integration BW", "%.1f MHz".format(integrationBwMhz))
     }
 }
 
@@ -279,6 +302,7 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
     var refOffsetText by remember(state.config.refLevelOffsetDb) { mutableStateOf(state.config.refLevelOffsetDb.toString()) }
     var rbwText by remember(state.config.rbwKhz) { mutableStateOf(state.config.rbwKhz.toString()) }
     var vbwText by remember(state.config.vbwKhz) { mutableStateOf(state.config.vbwKhz.toString()) }
+    var integrationBwText by remember(state.config.integrationBwMhz) { mutableStateOf(state.config.integrationBwMhz.toString()) }
     var sourceMode by remember(state.dataSourceMode) { mutableStateOf(state.dataSourceMode) }
     var baseUrl by remember(state.httpBaseUrl) { mutableStateOf(state.httpBaseUrl) }
 
@@ -317,6 +341,13 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                         modifier = Modifier.weight(1f),
                     )
                 }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = integrationBwText,
+                    onValueChange = { integrationBwText = it },
+                    label = { Text("Integration BW (MHz)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                )
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = refOffsetText,
@@ -386,6 +417,7 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                 spanText.toDoubleOrNull()?.let(viewModel::setSpanMhz)
                 rbwText.toDoubleOrNull()?.let(viewModel::setRbwKhz)
                 vbwText.toDoubleOrNull()?.let(viewModel::setVbwKhz)
+                integrationBwText.toDoubleOrNull()?.let(viewModel::setIntegrationBwMhz)
                 refOffsetText.toDoubleOrNull()?.let(viewModel::setRefLevelOffsetDb)
                 if (sourceMode != DataSourceMode.USB_SDR) {
                     viewModel.applyDataSource(sourceMode, baseUrl)

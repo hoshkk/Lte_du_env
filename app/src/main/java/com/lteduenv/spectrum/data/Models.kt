@@ -1,5 +1,7 @@
 package com.lteduenv.spectrum.data
 
+import kotlin.math.log10
+
 /** Which side of the repeater/base station link a reading was taken from. */
 enum class LinkDirection { TX, RX }
 
@@ -25,6 +27,8 @@ data class BandPreset(
     val downlinkMhz: Double,
     val uplinkMhz: Double,
     val spanMhz: Double,
+    /** Channel Power's Integration BW - the channel's real occupied bandwidth (narrower than [spanMhz], which adds sweep guard room). */
+    val integrationBwMhz: Double,
 ) {
     fun centerMhzFor(direction: LinkDirection): Double =
         if (direction == LinkDirection.TX) downlinkMhz else uplinkMhz
@@ -37,9 +41,9 @@ object BandPresets {
         // LTE1.8 has two channel-width configs in that material - both kept as separate presets
         // since they tune to different center frequencies. B1 and NR n78 dropped: neither was in
         // that material, so both were unconfirmed guesses.
-        BandPreset("lte_b3_30m", "LTE B3 (30M)", "LTE", downlinkMhz = 1845.0, uplinkMhz = 1750.0, spanMhz = 35.0),
-        BandPreset("lte_b3_20m", "LTE B3 (20M)", "LTE", downlinkMhz = 1840.0, uplinkMhz = 1745.0, spanMhz = 25.0),
-        BandPreset("lte_b8", "LTE B8 (900)", "LTE", downlinkMhz = 954.3, uplinkMhz = 909.3, spanMhz = 15.0),
+        BandPreset("lte_b3_30m", "LTE B3 (30M)", "LTE", downlinkMhz = 1845.0, uplinkMhz = 1750.0, spanMhz = 35.0, integrationBwMhz = 30.0),
+        BandPreset("lte_b3_20m", "LTE B3 (20M)", "LTE", downlinkMhz = 1840.0, uplinkMhz = 1745.0, spanMhz = 25.0, integrationBwMhz = 20.0),
+        BandPreset("lte_b8", "LTE B8 (900)", "LTE", downlinkMhz = 954.3, uplinkMhz = 909.3, spanMhz = 15.0, integrationBwMhz = 10.0),
     )
 }
 
@@ -66,6 +70,8 @@ data class SweepConfig(
      * source it corrects for external losses only, not the dongle's own uncalibrated gain chain.
      */
     val refLevelOffsetDb: Double = 0.0,
+    /** Channel Power's Integration BW - see [BandPreset.integrationBwMhz]. */
+    val integrationBwMhz: Double = 20.0,
 ) {
     val startMhz: Double get() = centerMhz - spanMhz / 2.0
     val stopMhz: Double get() = centerMhz + spanMhz / 2.0
@@ -87,6 +93,29 @@ data class SpectrumFrame(
         val ratio = ((freqMhz - startMhz) / span).coerceIn(0.0, 1.0)
         val idx = (ratio * (pointCount - 1)).toInt()
         return levelsDbm[idx]
+    }
+
+    /**
+     * Channel Power: sums linear power across every bin within [integrationBwMhz] of [centerMhz]
+     * and converts back to dB, like a real analyzer's Channel Power measurement - the total power
+     * actually present in that band, not just one bin's peak/marker reading. Null if the frame is
+     * empty or the integration window falls outside it.
+     */
+    fun channelPowerDbm(centerMhz: Double, integrationBwMhz: Double): Double? {
+        if (pointCount == 0) return null
+        val span = stopMhz - startMhz
+        if (span <= 0.0) return null
+        val lowMhz = centerMhz - integrationBwMhz / 2.0
+        val highMhz = centerMhz + integrationBwMhz / 2.0
+        val startIdx = (((lowMhz - startMhz) / span) * (pointCount - 1)).toInt().coerceIn(0, pointCount - 1)
+        val endIdx = (((highMhz - startMhz) / span) * (pointCount - 1)).toInt().coerceIn(0, pointCount - 1)
+        if (endIdx < startIdx) return null
+        var sumLinearMw = 0.0
+        for (i in startIdx..endIdx) {
+            sumLinearMw += Math.pow(10.0, levelsDbm[i] / 10.0)
+        }
+        if (sumLinearMw <= 0.0) return null
+        return 10.0 * log10(sumLinearMw)
     }
 }
 

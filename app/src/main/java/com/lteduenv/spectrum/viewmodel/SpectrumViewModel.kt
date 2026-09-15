@@ -36,6 +36,8 @@ data class SpectrumUiState(
     val markers: List<Marker> = (1..5).map { Marker(it) },
     val selectedMarker: Int = 1,
     val spectrumFrame: SpectrumFrame? = null,
+    /** Total Channel Power over [SweepConfig.integrationBwMhz] - see [SpectrumFrame.channelPowerDbm]. */
+    val channelPowerDbm: Double? = null,
     val vswrFrame: VswrFrame? = null,
     val dtfFrame: DtfFrame? = null,
     val cableLossResult: CableLossResult? = null,
@@ -74,7 +76,7 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
         vbwAverage = null
         // Clear stale frames so a leftover trace from the previous mode/source doesn't linger
         // on screen until the new source produces its first frame.
-        _uiState.update { it.copy(spectrumFrame = null, vswrFrame = null, dtfFrame = null) }
+        _uiState.update { it.copy(spectrumFrame = null, vswrFrame = null, dtfFrame = null, channelPowerDbm = null) }
         readingJob = viewModelScope.launch {
             // Wait for the previous job (and its stopRx()/cleanup) to fully finish before this
             // one starts collecting, so its teardown can't run after - and turn off - the new job.
@@ -84,9 +86,11 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
                     MeasurementMode.SPECTRUM -> dataSource.spectrum(state.config).collect { frame ->
                         val offsetApplied = applyRefLevelOffset(frame, state.config.refLevelOffsetDb)
                         val adjusted = applyVbwSmoothing(offsetApplied, state.config.rbwKhz, state.config.vbwKhz)
+                        val channelPower = adjusted.channelPowerDbm(state.config.centerMhz, state.config.integrationBwMhz)
                         _uiState.update {
                             it.copy(
                                 spectrumFrame = adjusted,
+                                channelPowerDbm = channelPower,
                                 markers = refreshMarkerLevels(it.markers, adjusted),
                                 sourceStatusMessage = null,
                             )
@@ -155,6 +159,7 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
                 config = it.config.copy(
                     centerMhz = preset.centerMhzFor(it.config.direction),
                     spanMhz = preset.spanMhz,
+                    integrationBwMhz = preset.integrationBwMhz,
                 ),
             )
         }
@@ -206,6 +211,12 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
     /** Video bandwidth - see [applyVbwSmoothing]. */
     fun setVbwKhz(value: Double) {
         _uiState.update { it.copy(config = it.config.copy(vbwKhz = value.coerceIn(0.1, 1_000.0))) }
+        restartReadingLoop()
+    }
+
+    /** Channel Power's Integration BW - see [SpectrumFrame.channelPowerDbm]. */
+    fun setIntegrationBwMhz(value: Double) {
+        _uiState.update { it.copy(config = it.config.copy(integrationBwMhz = value.coerceAtLeast(0.01))) }
         restartReadingLoop()
     }
 
