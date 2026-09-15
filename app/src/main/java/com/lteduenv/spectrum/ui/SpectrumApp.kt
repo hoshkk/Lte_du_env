@@ -72,6 +72,7 @@ fun SpectrumApp(viewModel: SpectrumViewModel = viewModel()) {
                     onSelectMarker = viewModel::selectMarker,
                     onPeak = viewModel::peakSearch,
                     onClear = viewModel::clearSelectedMarker,
+                    onToggleChannelPower = viewModel::setChannelPowerEnabled,
                 )
                 Spacer(Modifier.height(6.dp))
             }
@@ -92,7 +93,7 @@ fun SpectrumApp(viewModel: SpectrumViewModel = viewModel()) {
                 }
             }
 
-            if (state.mode == MeasurementMode.SPECTRUM) {
+            if (state.mode == MeasurementMode.SPECTRUM && state.channelPowerEnabled) {
                 Spacer(Modifier.height(6.dp))
                 ChannelPowerBar(state)
             }
@@ -160,8 +161,13 @@ private fun MarkerRow(
     onSelectMarker: (Int) -> Unit,
     onPeak: () -> Unit,
     onClear: () -> Unit,
+    onToggleChannelPower: (Boolean) -> Unit,
 ) {
-    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(
+        Modifier.horizontalScroll(rememberScrollState()),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
         state.markers.forEach { marker ->
             FilterChip(
                 selected = state.selectedMarker == marker.index,
@@ -181,6 +187,11 @@ private fun MarkerRow(
             Text("Peak", fontSize = 12.sp)
         }
         Button(onClick = onClear) { Text("Clear", fontSize = 12.sp) }
+        FilterChip(
+            selected = state.channelPowerEnabled,
+            onClick = { onToggleChannelPower(!state.channelPowerEnabled) },
+            label = { Text("Ch Power", fontSize = 11.sp) },
+        )
     }
 }
 

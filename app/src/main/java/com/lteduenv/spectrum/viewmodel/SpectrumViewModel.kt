@@ -38,6 +38,8 @@ data class SpectrumUiState(
     val spectrumFrame: SpectrumFrame? = null,
     /** Total Channel Power over [SweepConfig.integrationBwMhz] - see [SpectrumFrame.channelPowerDbm]. */
     val channelPowerDbm: Double? = null,
+    /** Whether the Channel Power readout is shown - like selecting/deselecting MEASURE > Channel Power. */
+    val channelPowerEnabled: Boolean = false,
     val vswrFrame: VswrFrame? = null,
     val dtfFrame: DtfFrame? = null,
     val cableLossResult: CableLossResult? = null,
@@ -218,6 +220,11 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
     fun setIntegrationBwMhz(value: Double) {
         _uiState.update { it.copy(config = it.config.copy(integrationBwMhz = value.coerceAtLeast(0.01))) }
         restartReadingLoop()
+    }
+
+    /** Shows/hides the Channel Power readout - it's always computed, this just controls display. */
+    fun setChannelPowerEnabled(enabled: Boolean) {
+        _uiState.update { it.copy(channelPowerEnabled = enabled) }
     }
 
     fun selectMarker(index: Int) {
