@@ -32,16 +32,21 @@ data class BandPreset(
 
 object BandPresets {
     val all = listOf(
-        // KT's LTE bands only - B5/B7 (SKT) and the earlier "5A" 800MHz guess (inferred from an
-        // SKT reference instrument photo, not a real KT band) were dropped since they don't apply
-        // to KT's network. Standard 3GPP FDD band plans (uplink = UE tx / network rx, downlink =
-        // network tx / UE rx).
+        // LTE B3 (1.8GHz) and B8 (900MHz) values below are the real deployed channel plan from
+        // KT's own MS2090A field-instrument training material (ROU DL/UL measurement steps),
+        // not a generic 3GPP band-plan guess: FREQ/SPAN screenshots gave exact center frequencies
+        // and the SPAN to use for each channel width.
+        // LTE1.8 has two channel-width configs in that material - both kept as separate presets
+        // since they tune to different center frequencies.
+        BandPreset("lte_b3_30m", "LTE B3 (30M)", "LTE", downlinkMhz = 1845.0, uplinkMhz = 1750.0, spanMhz = 35.0),
+        BandPreset("lte_b3_20m", "LTE B3 (20M)", "LTE", downlinkMhz = 1840.0, uplinkMhz = 1745.0, spanMhz = 25.0),
+        BandPreset("lte_b8", "LTE B8 (900)", "LTE", downlinkMhz = 954.3, uplinkMhz = 909.3, spanMhz = 15.0),
+        // LTE B1 wasn't in that material - still the generic 3GPP band-plan center, not confirmed
+        // against KT's actual deployed channel like B3/B8 above are. Correct it if it's off.
         BandPreset("lte_b1", "LTE B1", "LTE", downlinkMhz = 2140.0, uplinkMhz = 1950.0, spanMhz = 60.0),
-        BandPreset("lte_b3", "LTE B3", "LTE", downlinkMhz = 1842.5, uplinkMhz = 1747.5, spanMhz = 75.0),
-        BandPreset("lte_b8", "LTE B8", "LTE", downlinkMhz = 942.5, uplinkMhz = 897.5, spanMhz = 35.0),
         // KT's 5G NR n78 slice from Korea's 2018 spectrum auction: 3.50-3.60 GHz (100 MHz), TDD
         // so uplink/downlink share the same frequency. This is public auction-record data, not
-        // confirmed against KT's actual deployed channel plan - correct it if it's off.
+        // confirmed against KT's actual deployed channel plan like B3/B8 above are.
         // KT's 28 GHz mmWave allocation (n257, 28.9-29.7 GHz - *not* "n28", a different, unrelated
         // low-band FDD band number) isn't included: RTL-SDR/HackRF only tune up to ~6 GHz, so it
         // physically can't be captured with this hardware.
@@ -51,8 +56,8 @@ object BandPresets {
 
 /** Sweep parameters shown along the bottom control bar (Freq / Span / Amp / RBW / VBW). */
 data class SweepConfig(
-    val centerMhz: Double = 1842.5,
-    val spanMhz: Double = 75.0,
+    val centerMhz: Double = 1840.0,
+    val spanMhz: Double = 25.0,
     val refLevelDbm: Double = 0.0,
     val rbwKhz: Double = 100.0,
     val vbwKhz: Double = 100.0,
@@ -63,6 +68,15 @@ data class SweepConfig(
      * its tuner is always run in automatic-gain mode.
      */
     val preampEnabled: Boolean = false,
+    /**
+     * Calibration offset added to every displayed level, mirroring a real analyzer's REF LEVEL
+     * OFFSET: enter the monitor port's rated loss plus the measured loss of your patch cable (as
+     * a negative number, e.g. -43 for a 40dB port + 3dB cable) so the trace/markers read actual
+     * dBm at the antenna/reference point instead of the raw level at the SDR's own input. This is
+     * a manual correction - it's only as accurate as the loss values you enter, and on the USB SDR
+     * source it corrects for external losses only, not the dongle's own uncalibrated gain chain.
+     */
+    val refLevelOffsetDb: Double = 0.0,
 ) {
     val startMhz: Double get() = centerMhz - spanMhz / 2.0
     val stopMhz: Double get() = centerMhz + spanMhz / 2.0

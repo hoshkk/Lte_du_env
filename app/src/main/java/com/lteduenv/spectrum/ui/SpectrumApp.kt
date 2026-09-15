@@ -201,13 +201,17 @@ private fun BottomInfoBar(state: SpectrumUiState) {
         InfoField("Center", "%.2f MHz".format(config.centerMhz))
         InfoField("Span", "%.2f MHz".format(displaySpanMhz))
         InfoField("Ref", "%.1f dBm".format(config.refLevelDbm))
+        if (config.refLevelOffsetDb != 0.0) {
+            InfoField("Offset", "%.1f dB".format(config.refLevelOffsetDb))
+        }
         InfoField("Dir", config.direction.name)
         Spacer(Modifier.weight(1f))
         InfoField("Source", state.dataSourceLabel)
     }
     if (isUncalibrated && state.mode == MeasurementMode.SPECTRUM) {
         Text(
-            "USB SDR levels are relative (uncalibrated) dB, not absolute dBm - do not use for pass/fail power limits.",
+            "USB SDR's own gain chain is relative (uncalibrated), not absolute dBm - the Ref level offset above " +
+                "only corrects for port/cable loss you entered, not this. Do not use for pass/fail power limits.",
             color = AnalyzerColors.Warn,
             fontSize = 11.sp,
             modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
@@ -273,6 +277,7 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
     var centerText by remember(state.config.centerMhz) { mutableStateOf(state.config.centerMhz.toString()) }
     var spanText by remember(state.config.spanMhz) { mutableStateOf(state.config.spanMhz.toString()) }
     var refText by remember(state.config.refLevelDbm) { mutableStateOf(state.config.refLevelDbm.toString()) }
+    var refOffsetText by remember(state.config.refLevelOffsetDb) { mutableStateOf(state.config.refLevelOffsetDb.toString()) }
     var sourceMode by remember(state.dataSourceMode) { mutableStateOf(state.dataSourceMode) }
     var baseUrl by remember(state.httpBaseUrl) { mutableStateOf(state.httpBaseUrl) }
 
@@ -300,6 +305,19 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                     onValueChange = { refText = it },
                     label = { Text("Ref level (dBm)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = refOffsetText,
+                    onValueChange = { refOffsetText = it },
+                    label = { Text("Ref level offset (dB)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                )
+                Text(
+                    "모니터 포트 Loss + 측정 케이블 Loss 합산값을 마이너스로 입력하면, 트레이스/마커가 " +
+                        "실제 안테나단 기준 dBm으로 보정되어 표시됩니다 (예: 40dB 포트 + 3dB 케이블 = -43).",
+                    fontSize = 11.sp,
+                    color = AnalyzerColors.TextSecondary,
                 )
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -377,6 +395,7 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                 centerText.toDoubleOrNull()?.let(viewModel::setCenterMhz)
                 spanText.toDoubleOrNull()?.let(viewModel::setSpanMhz)
                 refText.toDoubleOrNull()?.let(viewModel::setRefLevelDbm)
+                refOffsetText.toDoubleOrNull()?.let(viewModel::setRefLevelOffsetDb)
                 if (sourceMode != DataSourceMode.USB_SDR) {
                     viewModel.applyDataSource(sourceMode, baseUrl)
                 }

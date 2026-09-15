@@ -32,7 +32,7 @@ enum class DataSourceMode { SIMULATED, HTTP, USB_SDR }
 data class SpectrumUiState(
     val mode: MeasurementMode = MeasurementMode.SPECTRUM,
     val config: SweepConfig = SweepConfig(),
-    val selectedBandId: String = "lte_b3",
+    val selectedBandId: String = "lte_b3_20m",
     val markers: List<Marker> = (1..5).map { Marker(it) },
     val selectedMarker: Int = 1,
     val spectrumFrame: SpectrumFrame? = null,
@@ -78,10 +78,11 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
             try {
                 when (state.mode) {
                     MeasurementMode.SPECTRUM -> dataSource.spectrum(state.config).collect { frame ->
+                        val adjusted = applyRefLevelOffset(frame, state.config.refLevelOffsetDb)
                         _uiState.update {
                             it.copy(
-                                spectrumFrame = frame,
-                                markers = refreshMarkerLevels(it.markers, frame),
+                                spectrumFrame = adjusted,
+                                markers = refreshMarkerLevels(it.markers, adjusted),
                                 sourceStatusMessage = null,
                             )
                         }
@@ -106,6 +107,13 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
 
     private fun refreshMarkerLevels(markers: List<Marker>, frame: SpectrumFrame): List<Marker> =
         markers.map { if (it.enabled) it.copy(levelDbm = frame.levelAt(it.freqMhz)) else it }
+
+    /** Adds the REF LEVEL OFFSET calibration (see [SweepConfig.refLevelOffsetDb]) to every point. */
+    private fun applyRefLevelOffset(frame: SpectrumFrame, offsetDb: Double): SpectrumFrame {
+        if (offsetDb == 0.0) return frame
+        val offset = offsetDb.toFloat()
+        return frame.copy(levelsDbm = FloatArray(frame.levelsDbm.size) { frame.levelsDbm[it] + offset })
+    }
 
     fun selectMode(mode: MeasurementMode) {
         if (_uiState.value.mode == mode) return
@@ -157,6 +165,12 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
     /** Front-end RF preamp (HackRF's AMP stage only - see [SweepConfig.preampEnabled]). */
     fun setPreampEnabled(enabled: Boolean) {
         _uiState.update { it.copy(config = it.config.copy(preampEnabled = enabled)) }
+        restartReadingLoop()
+    }
+
+    /** REF LEVEL OFFSET calibration - see [SweepConfig.refLevelOffsetDb]. */
+    fun setRefLevelOffsetDb(value: Double) {
+        _uiState.update { it.copy(config = it.config.copy(refLevelOffsetDb = value)) }
         restartReadingLoop()
     }
 
