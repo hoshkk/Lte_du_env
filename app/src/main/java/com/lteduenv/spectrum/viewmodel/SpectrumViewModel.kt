@@ -32,7 +32,7 @@ enum class DataSourceMode { SIMULATED, HTTP, USB_SDR }
 data class SpectrumUiState(
     val mode: MeasurementMode = MeasurementMode.SPECTRUM,
     val config: SweepConfig = SweepConfig(),
-    val selectedBandId: String = "b5a",
+    val selectedBandId: String = "lte_b3",
     val markers: List<Marker> = (1..5).map { Marker(it) },
     val selectedMarker: Int = 1,
     val spectrumFrame: SpectrumFrame? = null,
@@ -46,6 +46,9 @@ data class SpectrumUiState(
     val httpBaseUrl: String = "",
     /** Status/error text for the active data source (e.g. USB SDR connect progress). */
     val sourceStatusMessage: String? = null,
+    /** True while a HackRF is actively transmitting the CW test carrier (see [startTxTestSignal]). */
+    val txTestSignalActive: Boolean = false,
+    val txGainDb: Int = 0,
 ) {
     val selectedBand: BandPreset? get() = BandPresets.all.find { it.id == selectedBandId }
 }
@@ -267,7 +270,47 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /** True only if the currently attached dongle is a HackRF (RTL-SDR is receive-only hardware). */
+    fun currentDeviceSupportsTx(): Boolean = usbSdrDataSource.supportsTx()
+
+    fun setTxGainDb(value: Int) {
+        _uiState.update { it.copy(txGainDb = value.coerceIn(0, 47)) }
+    }
+
+    /**
+     * Starts an unmodulated CW test carrier at the current center frequency via a connected
+     * HackRF - RTL-SDR dongles cannot transmit (hardware limitation, not fixable in software).
+     * This actually radiates RF: only use it with an antenna/dummy load appropriate for the
+     * frequency and power, and on a frequency you're authorized to transmit on. Stops the normal
+     * RX reading loop first, since the hardware is half-duplex and can't RX and TX at once.
+     */
+    fun startTxTestSignal() {
+        viewModelScope.launch {
+            readingJob?.cancelAndJoin()
+            readingJob = null
+            val state = _uiState.value
+            val result = runCatching {
+                usbSdrDataSource.startTxTestTone(state.config.centerMhz, state.txGainDb)
+            }
+            _uiState.update {
+                it.copy(
+                    txTestSignalActive = result.isSuccess,
+                    sourceStatusMessage = result.exceptionOrNull()?.message
+                        ?: "Transmitting test carrier at %.2f MHz".format(state.config.centerMhz),
+                )
+            }
+        }
+    }
+
+    /** Stops the test carrier and resumes the normal RX reading loop. */
+    fun stopTxTestSignal() {
+        usbSdrDataSource.stopTxTestTone()
+        _uiState.update { it.copy(txTestSignalActive = false, sourceStatusMessage = null) }
+        restartReadingLoop()
+    }
+
     override fun onCleared() {
         readingJob?.cancel()
+        usbSdrDataSource.stopTxTestTone()
     }
 }

@@ -195,6 +195,33 @@ class UsbSdrDataSource(context: Context) : RepeaterDataSource {
         }
     }
 
+    /** True only if the currently attached dongle is a HackRF - RTL-SDR is receive-only hardware. */
+    fun supportsTx(): Boolean = findSupportedDevice()?.let { classify(it) == DeviceKind.HACKRF } ?: false
+
+    /**
+     * Transmits an unmodulated CW test carrier via a connected HackRF at [freqMhz] and
+     * [txGainDb] (0-47 dB). Throws if no HackRF is connected/permitted - RTL-SDR dongles can
+     * never transmit, that's a hardware limitation this can't work around. Caller must not have
+     * an RX collection (see [spectrum]) running against the same dongle at the same time.
+     */
+    fun startTxTestTone(freqMhz: Double, txGainDb: Int) {
+        val device = findSupportedDevice() ?: error("No SDR dongle found. Plug a HackRF in via USB OTG and try again.")
+        require(classify(device) == DeviceKind.HACKRF) {
+            "Only HackRF One can transmit; RTL-SDR dongles are receive-only hardware."
+        }
+        if (!hasPermission(device)) {
+            error("USB permission for the SDR dongle hasn't been granted yet.")
+        }
+        val hackRf = connectedHackRf(device)
+        hackRf.setFrequency((freqMhz * 1_000_000.0).toLong())
+        hackRf.setTxVgaGain(txGainDb)
+        hackRf.startTx()
+    }
+
+    fun stopTxTestTone() {
+        hackRfController?.stopTx()
+    }
+
     // Neither dongle has a directional coupler, so none of these can be measured.
     override fun vswr(config: SweepConfig): Flow<VswrFrame> = emptyFlow()
 

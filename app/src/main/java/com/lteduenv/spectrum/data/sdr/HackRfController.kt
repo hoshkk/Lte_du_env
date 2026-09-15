@@ -7,9 +7,11 @@ import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.channels.produce
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -34,9 +36,15 @@ class HackRfController(
             .map { usbInterface.getEndpoint(it) }
             .first { it.direction == UsbConstants.USB_DIR_IN && it.type == UsbConstants.USB_ENDPOINT_XFER_BULK }
     }
+    private val txEndpoint: UsbEndpoint by lazy {
+        (0 until usbInterface.endpointCount)
+            .map { usbInterface.getEndpoint(it) }
+            .first { it.direction == UsbConstants.USB_DIR_OUT && it.type == UsbConstants.USB_ENDPOINT_XFER_BULK }
+    }
 
     @Volatile
     private var streaming = false
+    private var txJob: Job? = null
 
     fun open() {
         connection = usbManager.openDevice(device)
@@ -49,6 +57,8 @@ class HackRfController(
 
     fun close() {
         streaming = false
+        txJob?.cancel()
+        txJob = null
         if (::connection.isInitialized) {
             runCatching { setTransceiverMode(TRANSCEIVER_MODE_OFF) }
             connection.releaseInterface(usbInterface)
@@ -122,6 +132,39 @@ class HackRfController(
         runCatching { setTransceiverMode(TRANSCEIVER_MODE_OFF) }
     }
 
+    /** 0-47 dB in 1 dB steps - TX output gain, separate from the RX LNA/VGA gains. */
+    fun setTxVgaGain(gainDb: Int) {
+        controlIn(VENDOR_REQUEST_SET_TXVGA_GAIN, 0, gainDb.coerceIn(0, 47), 1)
+    }
+
+    /**
+     * Transmits an unmodulated CW carrier at the frequency last set with [setFrequency] - a test
+     * tone only, with no modulation, at [amplitude] (0f-1f of full scale). This actually radiates
+     * RF: only call it with an antenna or dummy load suited to the frequency/power in use, and on
+     * a frequency you're authorized to transmit on. Half-duplex like the real hardware - never
+     * call this while [startRx] is active on the same device, and vice versa.
+     */
+    fun startTx(amplitude: Float = 0.25f) {
+        setTransceiverMode(TRANSCEIVER_MODE_TRANSMIT)
+        streaming = true
+        val level = (amplitude.coerceIn(0f, 1f) * 127f).toInt().toByte()
+        val chunkSize = 262144 // matches libhackrf's TRANSFER_BUFFER_SIZE
+        // Constant I, zero Q = an unmodulated carrier exactly at the tuned center frequency.
+        val buffer = ByteArray(chunkSize) { if (it % 2 == 0) level else 0 }
+        txJob = CoroutineScope(Dispatchers.IO).launch {
+            while (isActive && streaming) {
+                connection.bulkTransfer(txEndpoint, buffer, chunkSize, 2000)
+            }
+        }
+    }
+
+    fun stopTx() {
+        streaming = false
+        txJob?.cancel()
+        txJob = null
+        runCatching { setTransceiverMode(TRANSCEIVER_MODE_OFF) }
+    }
+
     private fun controlOut(request: Int, value: Int, index: Int, data: ByteArray? = null) {
         val length = data?.size ?: 0
         val transferred = connection.controlTransfer(
@@ -170,9 +213,11 @@ class HackRfController(
         private const val VENDOR_REQUEST_AMP_ENABLE = 17
         private const val VENDOR_REQUEST_SET_LNA_GAIN = 19
         private const val VENDOR_REQUEST_SET_VGA_GAIN = 20
+        private const val VENDOR_REQUEST_SET_TXVGA_GAIN = 21
 
         // libhackrf hackrf_transceiver_mode values
         private const val TRANSCEIVER_MODE_OFF = 0
         private const val TRANSCEIVER_MODE_RECEIVE = 1
+        private const val TRANSCEIVER_MODE_TRANSMIT = 2
     }
 }

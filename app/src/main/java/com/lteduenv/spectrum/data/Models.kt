@@ -32,27 +32,27 @@ data class BandPreset(
 
 object BandPresets {
     val all = listOf(
-        // Korean domestic "5A" 800 MHz band: only the single frequency confirmed from the
-        // reference field-instrument photo (829-839 MHz sweep centered at 834.0) is used for
-        // both sides here, since the paired uplink/downlink split for this specific domestic
-        // band plan isn't confidently known - deliberately not guessing a duplex offset.
-        BandPreset("b5a", "5A", "CDMA/LTE", downlinkMhz = 834.0, uplinkMhz = 834.0, spanMhz = 10.0),
-        // Standard 3GPP FDD band plans below (uplink = UE tx / network rx, downlink = network tx).
+        // KT's LTE bands only - B5/B7 (SKT) and the earlier "5A" 800MHz guess (inferred from an
+        // SKT reference instrument photo, not a real KT band) were dropped since they don't apply
+        // to KT's network. Standard 3GPP FDD band plans (uplink = UE tx / network rx, downlink =
+        // network tx / UE rx).
         BandPreset("lte_b1", "LTE B1", "LTE", downlinkMhz = 2140.0, uplinkMhz = 1950.0, spanMhz = 60.0),
         BandPreset("lte_b3", "LTE B3", "LTE", downlinkMhz = 1842.5, uplinkMhz = 1747.5, spanMhz = 75.0),
-        BandPreset("lte_b5", "LTE B5", "LTE", downlinkMhz = 881.5, uplinkMhz = 836.5, spanMhz = 25.0),
-        BandPreset("lte_b7", "LTE B7", "LTE", downlinkMhz = 2655.0, uplinkMhz = 2535.0, spanMhz = 70.0),
         BandPreset("lte_b8", "LTE B8", "LTE", downlinkMhz = 942.5, uplinkMhz = 897.5, spanMhz = 35.0),
-        // n78 is TDD: uplink and downlink share the same frequency, just time-multiplexed.
-        BandPreset("nr_n78", "NR n78", "5G NR", downlinkMhz = 3600.0, uplinkMhz = 3600.0, spanMhz = 400.0),
-        BandPreset("nr_n28", "NR n28", "5G NR", downlinkMhz = 780.5, uplinkMhz = 725.5, spanMhz = 45.0),
+        // KT's 5G NR n78 slice from Korea's 2018 spectrum auction: 3.50-3.60 GHz (100 MHz), TDD
+        // so uplink/downlink share the same frequency. This is public auction-record data, not
+        // confirmed against KT's actual deployed channel plan - correct it if it's off.
+        // KT's 28 GHz mmWave allocation (n257, 28.9-29.7 GHz - *not* "n28", a different, unrelated
+        // low-band FDD band number) isn't included: RTL-SDR/HackRF only tune up to ~6 GHz, so it
+        // physically can't be captured with this hardware.
+        BandPreset("nr_n78", "NR n78", "5G NR", downlinkMhz = 3550.0, uplinkMhz = 3550.0, spanMhz = 100.0),
     )
 }
 
 /** Sweep parameters shown along the bottom control bar (Freq / Span / Amp / RBW / VBW). */
 data class SweepConfig(
-    val centerMhz: Double = 834.0,
-    val spanMhz: Double = 10.0,
+    val centerMhz: Double = 1842.5,
+    val spanMhz: Double = 75.0,
     val refLevelDbm: Double = 0.0,
     val rbwKhz: Double = 100.0,
     val vbwKhz: Double = 100.0,
