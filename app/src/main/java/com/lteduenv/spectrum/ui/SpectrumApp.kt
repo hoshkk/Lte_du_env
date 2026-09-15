@@ -268,44 +268,6 @@ private fun CableLossPanel(state: SpectrumUiState, viewModel: SpectrumViewModel)
     }
 }
 
-/**
- * HackRF-only test-carrier transmitter: an unmodulated CW tone at the current Center frequency,
- * for calibration/troubleshooting - not a network signal. RTL-SDR dongles never show this panel
- * since they're receive-only hardware. This genuinely radiates RF, so the gain field and warning
- * text stay visible whenever it's active, and starting it stops the RX reading loop (the
- * hardware is half-duplex - it can't RX and TX at once).
- */
-@Composable
-private fun TxTestSignalPanel(state: SpectrumUiState, viewModel: SpectrumViewModel) {
-    var txGainText by remember(state.txGainDb) { mutableStateOf(state.txGainDb.toString()) }
-    Column {
-        Text("Test Signal (TX) - HackRF only", fontSize = 12.sp, color = AnalyzerColors.TextPrimary, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(4.dp))
-        Text(
-            ("Transmits an unmodulated carrier at the current Center frequency (%.2f MHz). This radiates real RF - " +
-                "only use it with an antenna/dummy load appropriate for the frequency and power, and on a frequency " +
-                "you're authorized to transmit on.").format(state.config.centerMhz),
-            fontSize = 11.sp,
-            color = AnalyzerColors.Warn,
-        )
-        Spacer(Modifier.height(6.dp))
-        OutlinedTextField(
-            value = txGainText,
-            onValueChange = { txGainText = it; it.toIntOrNull()?.let(viewModel::setTxGainDb) },
-            label = { Text("TX gain (0-47 dB)") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            enabled = !state.txTestSignalActive,
-            modifier = Modifier.width(180.dp),
-        )
-        Spacer(Modifier.height(6.dp))
-        if (state.txTestSignalActive) {
-            Button(onClick = viewModel::stopTxTestSignal) { Text("Stop transmitting") }
-        } else {
-            Button(onClick = viewModel::startTxTestSignal) { Text("Start test carrier") }
-        }
-    }
-}
-
 @Composable
 private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel, onDismiss: () -> Unit) {
     var centerText by remember(state.config.centerMhz) { mutableStateOf(state.config.centerMhz.toString()) }
@@ -391,10 +353,6 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                     state.sourceStatusMessage?.let {
                         Spacer(Modifier.height(4.dp))
                         Text(it, fontSize = 11.sp, color = AnalyzerColors.Warn)
-                    }
-                    if (viewModel.currentDeviceSupportsTx()) {
-                        Spacer(Modifier.height(12.dp))
-                        TxTestSignalPanel(state, viewModel)
                     }
                 }
             }
