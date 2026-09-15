@@ -34,3 +34,13 @@ organization — see the project README for a plain-language summary.
   R828D-equipped dongle would have gone to the wrong I2C address (R828D's
   real address is `0x74`, per `TunerTypeCheck.R828D`). The address is now
   chosen from the detected `tunerType`.
+- Fixed a bug in `R820TTunerController.setLNAGain`/`setMixerGain`/`setVGAGain`:
+  the upstream formula `(level.value / TunerGain.values().size) * values.size`
+  divides before multiplying, and since `level.value` (0-10) is always
+  smaller than `TunerGain.values().size` (11), integer division truncated
+  every possible input to 0 - so every manual gain level (`GainLevel1`
+  through `GainLevel10`) silently collapsed to the same result as
+  `AutomaticGain`. Reordered to multiply first
+  (`(level.value * values.size) / TunerGain.values().size`, coerced into
+  the destination array's bounds) so manual gain levels actually scale
+  across the chip's real gain-step range.

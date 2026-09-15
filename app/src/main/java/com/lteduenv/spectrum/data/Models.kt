@@ -38,10 +38,20 @@ data class SweepConfig(
     val vbwKhz: Double = 100.0,
     /**
      * Front-end RF preamp, like a spectrum analyzer's Preamp toggle - trades headroom for
-     * sensitivity. Only HackRF has this (its ~14dB broadband AMP stage); RTL-SDR ignores it since
-     * its tuner is always run in automatic-gain mode.
+     * sensitivity. Only HackRF has this (its ~14dB broadband AMP stage).
      */
     val preampEnabled: Boolean = false,
+    /**
+     * RTL-SDR gain mode - like a real analyzer's AGC toggle. True runs the R820T/R828D tuner's
+     * own chip-level automatic gain control (LNA+Mixer AGC); false uses [manualGainLevel] instead.
+     * RTL-SDR has one gain axis (no separate Attenuator/Preamp stages like a calibrated
+     * instrument), so manual mode doubles as both: low levels behave like an attenuator (protects
+     * against strong nearby signals), high levels like a preamp (more sensitivity to weak ones).
+     * Ignored on HackRF, which has its own fixed LNA/VGA + [preampEnabled].
+     */
+    val autoGain: Boolean = true,
+    /** Manual RTL-SDR gain step, 1 (min, attenuator-like) to 10 (max, preamp-like). See [autoGain]. */
+    val manualGainLevel: Int = 5,
     /**
      * Calibration offset added to every displayed level, mirroring a real analyzer's REF LEVEL
      * OFFSET: enter the monitor port's rated loss plus the measured loss of your patch cable (as

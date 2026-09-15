@@ -154,6 +154,18 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
         restartReadingLoop()
     }
 
+    /** RTL-SDR gain mode (AGC vs manual) - see [SweepConfig.autoGain]. */
+    fun setAutoGain(enabled: Boolean) {
+        _uiState.update { it.copy(config = it.config.copy(autoGain = enabled)) }
+        restartReadingLoop()
+    }
+
+    /** RTL-SDR manual gain step, 1-10 - see [SweepConfig.manualGainLevel]. */
+    fun setManualGainLevel(level: Int) {
+        _uiState.update { it.copy(config = it.config.copy(manualGainLevel = level.coerceIn(1, 10))) }
+        restartReadingLoop()
+    }
+
     /** REF LEVEL OFFSET calibration - see [SweepConfig.refLevelOffsetDb]. */
     fun setRefLevelOffsetDb(value: Double) {
         _uiState.update { it.copy(config = it.config.copy(refLevelOffsetDb = value)) }

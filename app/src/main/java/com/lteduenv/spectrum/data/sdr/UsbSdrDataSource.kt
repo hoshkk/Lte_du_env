@@ -126,7 +126,13 @@ class UsbSdrDataSource(context: Context) : RepeaterDataSource {
         val sampleRate = SampleRate.RATE_2_400MHZ
         tuner.setSampleRate(sampleRate)
         tuner.tunedFrequency = (config.centerMhz * 1_000_000.0).toLong()
-        tuner.setGain(TunerGain.AutomaticGain)
+        tuner.setGain(
+            if (config.autoGain) {
+                TunerGain.AutomaticGain
+            } else {
+                TunerGain.values()[config.manualGainLevel.coerceIn(1, 10)]
+            },
+        )
 
         val fftSize = fftSizeForRbw(config.rbwKhz * 1_000.0, sampleRate.rate.toDouble())
         val floatsNeeded = fftSize * 2

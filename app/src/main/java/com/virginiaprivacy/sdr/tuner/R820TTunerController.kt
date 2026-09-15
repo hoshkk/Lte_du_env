@@ -129,19 +129,19 @@ class R820TTunerController(
 
     override fun setLNAGain(level: TunerGain) {
         val values = R820TLNAGain.values()
-        val newIndex = (level.value / TunerGain.values().size) * values.size
+        val newIndex = ((level.value * values.size) / TunerGain.values().size).coerceIn(0, values.size - 1)
         setLNAGain(values[newIndex], true)
     }
 
     override fun setMixerGain(level: TunerGain) {
         val values = R820TMixerGain.values()
-        val newIndex = (level.value / TunerGain.values().size) * values.size
+        val newIndex = ((level.value * values.size) / TunerGain.values().size).coerceIn(0, values.size - 1)
         setMixerGain(values[newIndex], true)
     }
 
     fun setVGAGain(level: TunerGain) {
         val values = R820TVGAGain.values()
-        val newIndex = (level.value / TunerGain.values().size) * values.size
+        val newIndex = ((level.value * values.size) / TunerGain.values().size).coerceIn(0, values.size - 1)
         setVGAGain(values[newIndex], true)
     }
 

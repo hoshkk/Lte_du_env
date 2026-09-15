@@ -28,6 +28,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -320,6 +321,27 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                         Switch(
                             checked = state.config.preampEnabled,
                             onCheckedChange = viewModel::setPreampEnabled,
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Text("Auto gain (RTL-SDR AGC)", fontSize = 12.sp, color = AnalyzerColors.TextSecondary)
+                        Switch(
+                            checked = state.config.autoGain,
+                            onCheckedChange = viewModel::setAutoGain,
+                        )
+                    }
+                    if (!state.config.autoGain) {
+                        Text(
+                            "Manual gain: ${state.config.manualGainLevel}/10 (low = attenuator-like, high = preamp-like)",
+                            fontSize = 11.sp,
+                            color = AnalyzerColors.TextSecondary,
+                        )
+                        Slider(
+                            value = state.config.manualGainLevel.toFloat(),
+                            onValueChange = { viewModel.setManualGainLevel(it.toInt()) },
+                            valueRange = 1f..10f,
+                            steps = 8,
                         )
                     }
                     Spacer(Modifier.height(8.dp))
