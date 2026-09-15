@@ -19,17 +19,24 @@ import com.virginiaprivacy.sdr.tuner.RTL2832TunerController
 import com.virginiaprivacy.sdr.tuner.TunerGain
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 
+private enum class DeviceKind { RTL2832U, HACKRF }
+
 /**
- * Reads a live spectrum from an RTL2832U USB SDR dongle (e.g. "RTL-SDR Blog" sticks) connected
- * through USB OTG - no root, no NDK. See app/src/main/java/com/virginiaprivacy/sdr/NOTICE.md for
- * where the low-level tuner protocol code comes from.
+ * Reads a live spectrum from a USB SDR dongle connected through USB OTG - no root, no NDK.
+ * Auto-detects whichever supported dongle is plugged in:
  *
- * A plain RTL-SDR dongle is receive-only and has no directional coupler, so [vswr], [dtf] and
- * [measureCableLoss] are not available through this data source - only [spectrum].
+ * - **RTL2832U** (RTL-SDR, vendor 0x0bda) - see app/src/main/java/com/virginiaprivacy/sdr/NOTICE.md
+ *   for where the vendored low-level tuner protocol code comes from.
+ * - **HackRF One** (vendor 0x1d50, product 0x6089) - talks directly to the device via
+ *   [HackRfController]; see that file's doc comment for where the protocol was verified.
+ *
+ * Both are receive-only with no directional coupler, so [vswr], [dtf] and [measureCableLoss] are
+ * not available through this data source - only [spectrum].
  *
  * USB permission must already be granted (see [findSupportedDevice], [hasPermission],
  * [requestPermission]) before [spectrum] is collected; call these from the UI layer, not from
@@ -37,16 +44,22 @@ import kotlinx.coroutines.flow.flowOn
  */
 class UsbSdrDataSource(context: Context) : RepeaterDataSource {
 
-    override val name: String = "USB SDR (RTL2832U)"
+    override val name: String = "USB SDR (RTL2832U / HackRF)"
 
     private val appContext = context.applicationContext
     private val usbManager = appContext.getSystemService(Context.USB_SERVICE) as UsbManager
 
-    /** An attached dongle recognized as an RTL2832U device (vendor 0x0bda, product 0x2832/0x2838). */
+    private fun classify(device: UsbDevice): DeviceKind? = when {
+        device.vendorId == RTL_SDR_VENDOR_ID && device.productId in RTL_SDR_PRODUCT_IDS ->
+            DeviceKind.RTL2832U
+        device.vendorId == HackRfController.VENDOR_ID && device.productId == HackRfController.PRODUCT_ID ->
+            DeviceKind.HACKRF
+        else -> null
+    }
+
+    /** An attached dongle recognized as either an RTL2832U or a HackRF One. */
     fun findSupportedDevice(): UsbDevice? =
-        usbManager.deviceList.values.firstOrNull {
-            it.vendorId == RTL_SDR_VENDOR_ID && it.productId in RTL_SDR_PRODUCT_IDS
-        }
+        usbManager.deviceList.values.firstOrNull { classify(it) != null }
 
     fun hasPermission(device: UsbDevice): Boolean = usbManager.hasPermission(device)
 
@@ -74,29 +87,49 @@ class UsbSdrDataSource(context: Context) : RepeaterDataSource {
         usbManager.requestPermission(device, permissionIntent)
     }
 
-    @Volatile private var usbController: RtlSdrUsbController? = null
-    @Volatile private var tunerController: RTL2832TunerController? = null
+    @Volatile private var rtlUsbController: RtlSdrUsbController? = null
+    @Volatile private var rtlTunerController: RTL2832TunerController? = null
+    @Volatile private var hackRfController: HackRfController? = null
 
-    private fun connectedTuner(device: UsbDevice): RTL2832TunerController {
-        tunerController?.let { return it }
+    private fun connectedRtlTuner(device: UsbDevice): RTL2832TunerController {
+        rtlTunerController?.let { return it }
         synchronized(this) {
-            tunerController?.let { return it }
+            rtlTunerController?.let { return it }
             val controller = RtlSdrUsbController(usbManager, device)
             val tuner = RTL2832TunerController.getTunerController(controller)
             controller.controller = tuner
-            usbController = controller
-            tunerController = tuner
+            rtlUsbController = controller
+            rtlTunerController = tuner
             return tuner
+        }
+    }
+
+    private fun connectedHackRf(device: UsbDevice): HackRfController {
+        hackRfController?.let { return it }
+        synchronized(this) {
+            hackRfController?.let { return it }
+            val controller = HackRfController(usbManager, device)
+            controller.open()
+            hackRfController = controller
+            return controller
         }
     }
 
     override fun spectrum(config: SweepConfig): Flow<SpectrumFrame> = flow {
         val device = findSupportedDevice()
-            ?: error("No RTL-SDR dongle found. Plug it in via USB OTG and try again.")
+            ?: error("No SDR dongle found. Plug an RTL-SDR or HackRF in via USB OTG and try again.")
         if (!hasPermission(device)) {
             error("USB permission for the SDR dongle hasn't been granted yet.")
         }
-        val tuner = connectedTuner(device)
+        when (classify(device)) {
+            DeviceKind.RTL2832U -> streamRtlSdr(device, config)
+            DeviceKind.HACKRF -> streamHackRf(device, config)
+            null -> error("Unrecognized USB SDR device.")
+        }
+    }.flowOn(Dispatchers.Default)
+
+    private suspend fun FlowCollector<SpectrumFrame>.streamRtlSdr(device: UsbDevice, config: SweepConfig) {
+        val tuner = connectedRtlTuner(device)
         val sampleRate = SampleRate.RATE_2_400MHZ
         tuner.setSampleRate(sampleRate)
         tuner.tunedFrequency = (config.centerMhz * 1_000_000.0).toLong()
@@ -105,7 +138,7 @@ class UsbSdrDataSource(context: Context) : RepeaterDataSource {
         val fftSize = 2048
         val floatsNeeded = fftSize * 2
         val pending = ArrayDeque<Float>()
-        val iqChannel = requireNotNull(usbController).start()
+        val iqChannel = requireNotNull(rtlUsbController).start()
         try {
             for (chunk in iqChannel) {
                 for (f in chunk) pending.addLast(f)
@@ -124,11 +157,45 @@ class UsbSdrDataSource(context: Context) : RepeaterDataSource {
                 }
             }
         } finally {
-            usbController?.stop()
+            rtlUsbController?.stop()
         }
-    }.flowOn(Dispatchers.Default)
+    }
 
-    // A receive-only dongle with no directional coupler can't measure any of these.
+    private suspend fun FlowCollector<SpectrumFrame>.streamHackRf(device: UsbDevice, config: SweepConfig) {
+        val hackRf = connectedHackRf(device)
+        hackRf.setSampleRate()
+        hackRf.setFrequency((config.centerMhz * 1_000_000.0).toLong())
+        hackRf.setLnaGain(24)
+        hackRf.setVgaGain(20)
+        hackRf.setAmpEnable(false)
+
+        val fftSize = 2048
+        val bytesNeeded = fftSize * 2 // one byte per I or Q sample (signed 8-bit)
+        val pending = ArrayDeque<Byte>()
+        val iqChannel = hackRf.startRx()
+        try {
+            for (chunk in iqChannel) {
+                for (b in chunk) pending.addLast(b)
+                while (pending.size >= bytesNeeded) {
+                    val window = FloatArray(bytesNeeded) { pending.removeFirst().toFloat() / 128f }
+                    val levels = Fft.magnitudeSpectrumDb(window, fftSize)
+                    val halfSpanMhz = HackRfController.SAMPLE_RATE_HZ / 2_000_000.0
+                    emit(
+                        SpectrumFrame(
+                            startMhz = config.centerMhz - halfSpanMhz,
+                            stopMhz = config.centerMhz + halfSpanMhz,
+                            levelsDbm = levels,
+                            timestampMs = System.currentTimeMillis(),
+                        ),
+                    )
+                }
+            }
+        } finally {
+            hackRf.stopRx()
+        }
+    }
+
+    // Neither dongle has a directional coupler, so none of these can be measured.
     override fun vswr(config: SweepConfig): Flow<VswrFrame> = emptyFlow()
 
     override fun dtf(config: SweepConfig, maxDistanceM: Double): Flow<DtfFrame> = emptyFlow()

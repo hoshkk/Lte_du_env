@@ -212,14 +212,14 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * Looks for an attached RTL-SDR dongle, requests USB permission if needed (shows a system
-     * dialog), and on success switches to [DataSourceMode.USB_SDR]. Safe to call repeatedly.
+     * Looks for an attached RTL-SDR or HackRF dongle, requests USB permission if needed (shows a
+     * system dialog), and on success switches to [DataSourceMode.USB_SDR]. Safe to call repeatedly.
      */
     fun connectUsbSdr() {
         val device = usbSdrDataSource.findSupportedDevice()
         if (device == null) {
             _uiState.update {
-                it.copy(sourceStatusMessage = "No RTL-SDR dongle found. Check the USB OTG connection.")
+                it.copy(sourceStatusMessage = "No RTL-SDR/HackRF dongle found. Check the USB OTG connection.")
             }
             return
         }

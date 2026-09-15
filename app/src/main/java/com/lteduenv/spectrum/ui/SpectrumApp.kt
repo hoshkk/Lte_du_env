@@ -325,7 +325,7 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                 if (sourceMode == DataSourceMode.USB_SDR) {
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Spectrum only - an RTL-SDR dongle is receive-only, so VSWR/DTF/Cable Loss stay simulated.",
+                        "Spectrum only - RTL-SDR/HackRF dongles are receive-only, so VSWR/DTF/Cable Loss stay simulated.",
                         fontSize = 11.sp,
                         color = AnalyzerColors.TextSecondary,
                     )

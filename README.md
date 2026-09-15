@@ -21,11 +21,12 @@
 2. **HttpRepeaterDataSource** — 중계기/기지국 장비가 노출하는 HTTP API를 폴링해 실제 TX/RX
    스펙트럼·VSWR·DTF 값을 가져오는 뼈대(stub) 구현입니다. Settings에서 데이터 소스를
    "Repeater HTTP"로 바꾸고 Base URL을 입력하면 이 소스로 전환됩니다.
-3. **UsbSdrDataSource** — RTL2832U 기반 USB SDR 동글(RTL-SDR)을 USB OTG로 연결해 **실제
-   스펙트럼**을 잡습니다. Settings에서 "USB SDR"을 선택하고 **Connect USB SDR** 버튼을 누르면
-   동글을 찾아 USB 권한을 요청합니다. 수신 전용 동글이라 VSWR/DTF/Cable Loss는 이 모드에서도
-   시뮬레이션 데이터로 남습니다. 연동에 필요한 하드웨어와 배선(커플러 → 어댑터 → 동글 → 폰)은
-   아래 "USB SDR 연동" 절을 참고하세요.
+3. **UsbSdrDataSource** — USB SDR 동글을 USB OTG로 연결해 **실제 스펙트럼**을 잡습니다.
+   **RTL2832U(RTL-SDR)와 HackRF One을 둘 다 지원**하며, 어느 쪽을 꽂았는지 자동으로 인식합니다.
+   Settings에서 "USB SDR"을 선택하고 **Connect USB SDR** 버튼을 누르면 동글을 찾아 USB 권한을
+   요청합니다. 둘 다 수신 전용 동글이라 VSWR/DTF/Cable Loss는 이 모드에서도 시뮬레이션 데이터로
+   남습니다. 연동에 필요한 하드웨어와 배선(커플러 → 어댑터 → 동글 → 폰)은 아래 "USB SDR 연동"
+   절을 참고하세요.
 
 `HttpRepeaterDataSource`가 기대하는 JSON 스키마는 파일 상단 주석에 정리되어 있습니다. 실제 장비의
 API 문서를 받으면 요청 경로와 파싱 로직을 그 스펙에 맞게 조정하면 됩니다. VSWR/DTF는 실제로는
@@ -34,17 +35,38 @@ API 문서를 받으면 요청 경로와 파싱 로직을 그 스펙에 맞게 �
 
 ## USB SDR 연동
 
+두 가지 동글을 지원하고, `UsbSdrDataSource`가 연결된 장치의 USB vendor/product ID를 보고 자동으로
+구분합니다.
+
+### RTL-SDR (RTL2832U)
+
 `app/src/main/java/com/virginiaprivacy/sdr/`에는 RTL2832U/R820T 튜너를 제어하는 코드가 들어있습니다.
 [Virginia Privacy Coalition의 `sdr` 프로젝트](https://github.com/virginiaprivacycoalition/sdr)에서
 가져온 것으로 **GPL-2.0 라이선스**이며, 자세한 출처·수정 내역·라이선스 영향은 그 디렉터리의
 `NOTICE.md`/`LICENSE.txt`를 참고하세요. USB 연결 자체(안드로이드 `UsbManager`/`UsbDeviceConnection`
-글루 코드, `RtlSdrUsbController.kt`)와 FFT(`Fft.kt`), 그리고 `UsbSdrDataSource.kt`는 이 프로젝트에서
-새로 작성한 코드입니다.
+글루 코드, `RtlSdrUsbController.kt`)는 이 프로젝트에서 새로 작성한 코드입니다.
 
-**준비물**
+- 주파수 범위: 대략 24MHz~1.7GHz (칩/모델에 따라 편차 있음)
+- 표시 대역폭: 한 번에 약 2.4MHz (샘플레이트 고정값)
 
-- RTL2832U 기반 SDR 동글 (R820T/R828D 튜너 권장 — 요즘 파는 RTL-SDR은 거의 다 이 계열)
-- USB-C to USB-A OTG 어댑터 (폰-동글 연결용)
+### HackRF One
+
+`HackRfController.kt`는 [Great Scott Gadgets의 공식 오픈소스 호스트 드라이버
+`libhackrf`](https://github.com/greatscottgadgets/hackrf)
+(`host/libhackrf/src/hackrf.c`/`.h`, BSD 계열 라이선스)에서 실제 USB 벤더 리퀘스트 번호·페이로드
+포맷을 확인한 뒤 안드로이드 `UsbManager`/`UsbDeviceConnection`로 직접 새로 작성한 코드입니다 (HackRF
+프로토콜은 제어 전송 몇 개로 충분히 단순해서, RTL-SDR 때와 달리 외부 코드를 그대로 가져다 쓸 필요는
+없었습니다).
+
+- 주파수 범위: 1MHz~6GHz (LTE 전대역 + 5G n78 포함)
+- 표시 대역폭: 한 번에 8MHz (샘플레이트 고정값, `HackRfController.SAMPLE_RATE_HZ`)
+- LNA/VGA 게인은 코드에 고정값(24dB/20dB)으로 넣어뒀습니다 — 실제 하드웨어로 테스트하면서 신호가
+  너무 세거나 약하면 이 값을 조정해야 할 수 있습니다
+
+### 공통 준비물
+
+- SDR 동글 (RTL-SDR 또는 HackRF One 중 하나)
+- USB(폰) ↔ 동글 단자에 맞는 OTG 케이블 (동글마다 USB-A/USB-B/Micro-USB 등 다름)
 - 중계기/기지국의 커플러 모니터링 포트에서 동글 입력까지 연결할 RF 케이블 + 커넥터 변환 어댑터
   (예: N-type to SMA)
 - 필요 시 RF 감쇠기(어테뉴에이터) — 소비자용 동글은 입력 파워 보호 회로가 약하므로 과전력 유입을
@@ -52,6 +74,10 @@ API 문서를 받으면 요청 경로와 파싱 로직을 그 스펙에 맞게 �
 
 **하드웨어 없이도 안전한 이유**: 동글이 연결되지 않았거나 USB 권한이 없으면 이 소스는 그냥
 에러 메시지만 상태 표시줄에 띄우고, 시뮬레이션 모드는 평소대로 계속 동작합니다.
+
+**검증 범위**: 이 환경에는 실제 RTL-SDR/HackRF 하드웨어가 없어서, 두 드라이버 모두 실제 장치로
+동작을 검증하지 못했습니다. USB 프로토콜은 각 프로젝트의 실제 오픈소스를 읽고 맞춘 것이지만,
+실기 연결 시 문제가 있으면 로그/증상을 알려주시면 바로 고칠 수 있습니다.
 
 ## 빌드
 
