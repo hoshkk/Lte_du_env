@@ -8,19 +8,15 @@ import android.content.IntentFilter
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
-import com.lteduenv.spectrum.data.CableLossResult
-import com.lteduenv.spectrum.data.DtfFrame
 import com.lteduenv.spectrum.data.RepeaterDataSource
 import com.lteduenv.spectrum.data.SpectrumFrame
 import com.lteduenv.spectrum.data.SweepConfig
-import com.lteduenv.spectrum.data.VswrFrame
 import com.virginiaprivacy.sdr.sample.SampleRate
 import com.virginiaprivacy.sdr.tuner.RTL2832TunerController
 import com.virginiaprivacy.sdr.tuner.TunerGain
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 
@@ -34,9 +30,6 @@ private enum class DeviceKind { RTL2832U, HACKRF }
  *   for where the vendored low-level tuner protocol code comes from.
  * - **HackRF One** (vendor 0x1d50, product 0x6089) - talks directly to the device via
  *   [HackRfController]; see that file's doc comment for where the protocol was verified.
- *
- * Both are receive-only with no directional coupler, so [vswr], [dtf] and [measureCableLoss] are
- * not available through this data source - only [spectrum].
  *
  * USB permission must already be granted (see [findSupportedDevice], [hasPermission],
  * [requestPermission]) before [spectrum] is collected; call these from the UI layer, not from
@@ -207,17 +200,6 @@ class UsbSdrDataSource(context: Context) : RepeaterDataSource {
         val lower = Integer.highestOneBit(raw)
         val upper = if (lower < MAX_FFT_SIZE) lower shl 1 else lower
         return if (raw - lower <= upper - raw) lower else upper
-    }
-
-    // Neither dongle has a directional coupler, so none of these can be measured.
-    override fun vswr(config: SweepConfig): Flow<VswrFrame> = emptyFlow()
-
-    override fun dtf(config: SweepConfig, maxDistanceM: Double): Flow<DtfFrame> = emptyFlow()
-
-    override suspend fun measureCableLoss(config: SweepConfig, lengthM: Double): CableLossResult {
-        throw UnsupportedOperationException(
-            "Cable loss measurement needs a VNA / directional coupler - not possible from a receive-only SDR dongle.",
-        )
     }
 
     companion object {

@@ -5,16 +5,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.lteduenv.spectrum.data.BandPreset
 import com.lteduenv.spectrum.data.BandPresets
-import com.lteduenv.spectrum.data.CableLossResult
-import com.lteduenv.spectrum.data.DtfFrame
-import com.lteduenv.spectrum.data.LinkDirection
 import com.lteduenv.spectrum.data.Marker
-import com.lteduenv.spectrum.data.MeasurementMode
 import com.lteduenv.spectrum.data.RepeaterDataSource
 import com.lteduenv.spectrum.data.SimulatedRepeaterDataSource
 import com.lteduenv.spectrum.data.SpectrumFrame
 import com.lteduenv.spectrum.data.SweepConfig
-import com.lteduenv.spectrum.data.VswrFrame
 import com.lteduenv.spectrum.data.sdr.UsbSdrDataSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -29,7 +24,6 @@ import kotlinx.coroutines.launch
 enum class DataSourceMode { SIMULATED, USB_SDR }
 
 data class SpectrumUiState(
-    val mode: MeasurementMode = MeasurementMode.SPECTRUM,
     val config: SweepConfig = SweepConfig(),
     val selectedBandId: String = "lte_b3_20m",
     val markers: List<Marker> = (1..5).map { Marker(it) },
@@ -39,11 +33,6 @@ data class SpectrumUiState(
     val channelPowerDbm: Double? = null,
     /** Whether the Channel Power readout is shown - like selecting/deselecting MEASURE > Channel Power. */
     val channelPowerEnabled: Boolean = false,
-    val vswrFrame: VswrFrame? = null,
-    val dtfFrame: DtfFrame? = null,
-    val cableLossResult: CableLossResult? = null,
-    val cableLossLengthM: Double = 50.0,
-    val cableLossLoading: Boolean = false,
     val dataSourceLabel: String = "",
     val dataSourceMode: DataSourceMode = DataSourceMode.SIMULATED,
     /** Status/error text for the active data source (e.g. USB SDR connect progress). */
@@ -74,36 +63,25 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
         val state = _uiState.value
         val previousJob = readingJob
         vbwAverage = null
-        // Clear stale frames so a leftover trace from the previous mode/source doesn't linger
-        // on screen until the new source produces its first frame.
-        _uiState.update { it.copy(spectrumFrame = null, vswrFrame = null, dtfFrame = null, channelPowerDbm = null) }
+        // Clear the stale frame so a leftover trace doesn't linger on screen until the new
+        // source/config produces its first frame.
+        _uiState.update { it.copy(spectrumFrame = null, channelPowerDbm = null) }
         readingJob = viewModelScope.launch {
             // Wait for the previous job (and its stopRx()/cleanup) to fully finish before this
             // one starts collecting, so its teardown can't run after - and turn off - the new job.
             previousJob?.cancelAndJoin()
             try {
-                when (state.mode) {
-                    MeasurementMode.SPECTRUM -> dataSource.spectrum(state.config).collect { frame ->
-                        val offsetApplied = applyRefLevelOffset(frame, state.config.refLevelOffsetDb)
-                        val adjusted = applyVbwSmoothing(offsetApplied, state.config.rbwKhz, state.config.vbwKhz)
-                        val channelPower = adjusted.channelPowerDbm(state.config.centerMhz, state.config.integrationBwMhz)
-                        _uiState.update {
-                            it.copy(
-                                spectrumFrame = adjusted,
-                                channelPowerDbm = channelPower,
-                                markers = refreshMarkerLevels(it.markers, adjusted),
-                                sourceStatusMessage = null,
-                            )
-                        }
-                    }
-                    MeasurementMode.VSWR -> dataSource.vswr(state.config).collect { frame ->
-                        _uiState.update { it.copy(vswrFrame = frame, sourceStatusMessage = null) }
-                    }
-                    MeasurementMode.DTF -> dataSource.dtf(state.config).collect { frame ->
-                        _uiState.update { it.copy(dtfFrame = frame, sourceStatusMessage = null) }
-                    }
-                    MeasurementMode.CABLE_LOSS -> {
-                        // No continuous stream here; the user triggers a one-shot measurement.
+                dataSource.spectrum(state.config).collect { frame ->
+                    val offsetApplied = applyRefLevelOffset(frame, state.config.refLevelOffsetDb)
+                    val adjusted = applyVbwSmoothing(offsetApplied, state.config.rbwKhz, state.config.vbwKhz)
+                    val channelPower = adjusted.channelPowerDbm(state.config.centerMhz, state.config.integrationBwMhz)
+                    _uiState.update {
+                        it.copy(
+                            spectrumFrame = adjusted,
+                            channelPowerDbm = channelPower,
+                            markers = refreshMarkerLevels(it.markers, adjusted),
+                            sourceStatusMessage = null,
+                        )
                     }
                 }
             } catch (e: CancellationException) {
@@ -146,36 +124,16 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
         return frame.copy(levelsDbm = smoothed)
     }
 
-    fun selectMode(mode: MeasurementMode) {
-        if (_uiState.value.mode == mode) return
-        _uiState.update { it.copy(mode = mode) }
-        restartReadingLoop()
-    }
-
     fun selectBand(preset: BandPreset) {
         _uiState.update {
             it.copy(
                 selectedBandId = preset.id,
                 config = it.config.copy(
-                    centerMhz = preset.centerMhzFor(it.config.direction),
+                    centerMhz = preset.uplinkMhz,
                     spanMhz = preset.spanMhz,
                     integrationBwMhz = preset.integrationBwMhz,
                 ),
             )
-        }
-        restartReadingLoop()
-    }
-
-    /**
-     * Switches TX/RX. When a band preset is selected, this retunes to that band's downlink (TX)
-     * or uplink (RX) center frequency - otherwise only the direction label changes, since a
-     * manually-entered frequency has no known paired uplink/downlink counterpart to jump to.
-     */
-    fun setDirection(direction: LinkDirection) {
-        if (_uiState.value.config.direction == direction) return
-        _uiState.update { state ->
-            val newCenterMhz = state.selectedBand?.centerMhzFor(direction) ?: state.config.centerMhz
-            state.copy(config = state.config.copy(direction = direction, centerMhz = newCenterMhz))
         }
         restartReadingLoop()
     }
@@ -263,40 +221,13 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun setCableLossLengthM(value: Double) {
-        _uiState.update { it.copy(cableLossLengthM = value.coerceAtLeast(0.0)) }
-    }
-
-    fun measureCableLoss() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(cableLossLoading = true) }
-            val result = runCatching {
-                dataSource.measureCableLoss(_uiState.value.config, _uiState.value.cableLossLengthM)
-            }
-            _uiState.update {
-                it.copy(
-                    cableLossLoading = false,
-                    cableLossResult = result.getOrNull() ?: it.cableLossResult,
-                    sourceStatusMessage = result.exceptionOrNull()?.message ?: it.sourceStatusMessage,
-                )
-            }
-        }
-    }
-
     /** Switches the active [RepeaterDataSource]. For [DataSourceMode.USB_SDR], call [connectUsbSdr] first. */
     fun applyDataSource(mode: DataSourceMode) {
         dataSource = when (mode) {
             DataSourceMode.SIMULATED -> SimulatedRepeaterDataSource()
             DataSourceMode.USB_SDR -> usbSdrDataSource
         }
-        _uiState.update {
-            it.copy(
-                dataSourceMode = mode,
-                dataSourceLabel = dataSource.name,
-                // A cable-loss reading from the old source no longer applies to the new one.
-                cableLossResult = null,
-            )
-        }
+        _uiState.update { it.copy(dataSourceMode = mode, dataSourceLabel = dataSource.name) }
         restartReadingLoop()
     }
 

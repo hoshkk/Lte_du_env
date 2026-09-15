@@ -21,10 +21,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.lteduenv.spectrum.data.DtfFrame
 import com.lteduenv.spectrum.data.Marker
 import com.lteduenv.spectrum.data.SpectrumFrame
-import com.lteduenv.spectrum.data.VswrFrame
 
 private const val GRID_ROWS = 8
 private const val GRID_COLS = 10
@@ -141,71 +139,6 @@ fun SpectrumTraceCanvas(
                     drawContext.canvas.nativeCanvas.drawText("M${m.index}", x + 8f, (y - 8f).coerceAtLeast(16f), paint)
                 }
             }
-        }
-    }
-}
-
-@Composable
-fun VswrTraceCanvas(
-    frame: VswrFrame?,
-    modifier: Modifier = Modifier,
-    minReturnLossDb: Double = -40.0,
-    maxReturnLossDb: Double = 0.0,
-) {
-    val yLabels = remember { (0..GRID_ROWS).map { row -> "%.0f".format(maxReturnLossDb + row * (minReturnLossDb - maxReturnLossDb) / GRID_ROWS) } }
-    val xLabels = remember(frame?.samples?.firstOrNull()?.freqMhz, frame?.samples?.lastOrNull()?.freqMhz) {
-        val start = frame?.samples?.firstOrNull()?.freqMhz ?: 0.0
-        val stop = frame?.samples?.lastOrNull()?.freqMhz ?: 0.0
-        (0..4).map { i -> "%.1f".format(start + i * (stop - start) / 4) }
-    }
-    GraphFrame(yLabels, xLabels, modifier) { graphModifier ->
-        Canvas(graphModifier) {
-            val (xs, ys) = gridPath(size.width, size.height)
-            xs.forEach { x -> drawLine(AnalyzerColors.GridLine, androidx.compose.ui.geometry.Offset(x, 0f), androidx.compose.ui.geometry.Offset(x, size.height), 1f) }
-            ys.forEach { y -> drawLine(AnalyzerColors.GridLine, androidx.compose.ui.geometry.Offset(0f, y), androidx.compose.ui.geometry.Offset(size.width, y), 1f) }
-
-            val samples = frame?.samples ?: return@Canvas
-            if (samples.size < 2) return@Canvas
-            val path = Path()
-            samples.forEachIndexed { i, s ->
-                val x = i / (samples.size - 1).toFloat() * size.width
-                val ratio = ((s.returnLossDb - maxReturnLossDb) / (minReturnLossDb - maxReturnLossDb)).toFloat().coerceIn(0f, 1f)
-                val y = ratio * size.height
-                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-            }
-            drawPath(path, AnalyzerColors.Good, style = Stroke(width = 2.5f))
-        }
-    }
-}
-
-@Composable
-fun DtfTraceCanvas(
-    frame: DtfFrame?,
-    modifier: Modifier = Modifier,
-    minReturnLossDb: Double = -45.0,
-    maxReturnLossDb: Double = 0.0,
-) {
-    val yLabels = remember { (0..GRID_ROWS).map { row -> "%.0f".format(maxReturnLossDb + row * (minReturnLossDb - maxReturnLossDb) / GRID_ROWS) } }
-    val xLabels = remember(frame?.samples?.lastOrNull()?.distanceM) {
-        val maxD = frame?.samples?.lastOrNull()?.distanceM ?: 0.0
-        (0..4).map { i -> "%.0fm".format(i * maxD / 4) }
-    }
-    GraphFrame(yLabels, xLabels, modifier) { graphModifier ->
-        Canvas(graphModifier) {
-            val (xs, ys) = gridPath(size.width, size.height)
-            xs.forEach { x -> drawLine(AnalyzerColors.GridLine, androidx.compose.ui.geometry.Offset(x, 0f), androidx.compose.ui.geometry.Offset(x, size.height), 1f) }
-            ys.forEach { y -> drawLine(AnalyzerColors.GridLine, androidx.compose.ui.geometry.Offset(0f, y), androidx.compose.ui.geometry.Offset(size.width, y), 1f) }
-
-            val samples = frame?.samples ?: return@Canvas
-            if (samples.size < 2) return@Canvas
-            val path = Path()
-            samples.forEachIndexed { i, s ->
-                val x = i / (samples.size - 1).toFloat() * size.width
-                val ratio = ((s.returnLossDb - maxReturnLossDb) / (minReturnLossDb - maxReturnLossDb)).toFloat().coerceIn(0f, 1f)
-                val y = ratio * size.height
-                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-            }
-            drawPath(path, AnalyzerColors.Trace, style = Stroke(width = 2.5f))
         }
     }
 }

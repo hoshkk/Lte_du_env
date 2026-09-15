@@ -43,8 +43,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.lteduenv.spectrum.data.BandPresets
-import com.lteduenv.spectrum.data.LinkDirection
-import com.lteduenv.spectrum.data.MeasurementMode
 import com.lteduenv.spectrum.viewmodel.DataSourceMode
 import com.lteduenv.spectrum.viewmodel.SpectrumUiState
 import com.lteduenv.spectrum.viewmodel.SpectrumViewModel
@@ -61,39 +59,32 @@ fun SpectrumApp(viewModel: SpectrumViewModel = viewModel()) {
                 .padding(padding)
                 .padding(8.dp),
         ) {
-            TopBar(state, onModeSelected = viewModel::selectMode, onSettingsClick = { showSettings = true })
+            TopBar(onSettingsClick = { showSettings = true })
             Spacer(Modifier.height(6.dp))
 
-            if (state.mode == MeasurementMode.SPECTRUM) {
-                BandRow(state, onSelect = viewModel::selectBand)
-                Spacer(Modifier.height(6.dp))
-                MarkerRow(
-                    state,
-                    onSelectMarker = viewModel::selectMarker,
-                    onPeak = viewModel::peakSearch,
-                    onClear = viewModel::clearSelectedMarker,
-                    onToggleChannelPower = viewModel::setChannelPowerEnabled,
-                )
-                Spacer(Modifier.height(6.dp))
-            }
+            BandRow(state, onSelect = viewModel::selectBand)
+            Spacer(Modifier.height(6.dp))
+            MarkerRow(
+                state,
+                onSelectMarker = viewModel::selectMarker,
+                onPeak = viewModel::peakSearch,
+                onClear = viewModel::clearSelectedMarker,
+                onToggleChannelPower = viewModel::setChannelPowerEnabled,
+            )
+            Spacer(Modifier.height(6.dp))
 
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                when (state.mode) {
-                    MeasurementMode.SPECTRUM -> SpectrumTraceCanvas(
-                        frame = state.spectrumFrame,
-                        refLevelDbm = state.config.refLevelDbm,
-                        markers = state.markers,
-                        selectedMarker = state.selectedMarker,
-                        modifier = Modifier.fillMaxSize(),
-                        onTapFrequency = viewModel::placeMarkerAtFrequency,
-                    )
-                    MeasurementMode.VSWR -> VswrTraceCanvas(state.vswrFrame, Modifier.fillMaxSize())
-                    MeasurementMode.DTF -> DtfTraceCanvas(state.dtfFrame, Modifier.fillMaxSize())
-                    MeasurementMode.CABLE_LOSS -> CableLossPanel(state, viewModel)
-                }
+                SpectrumTraceCanvas(
+                    frame = state.spectrumFrame,
+                    refLevelDbm = state.config.refLevelDbm,
+                    markers = state.markers,
+                    selectedMarker = state.selectedMarker,
+                    modifier = Modifier.fillMaxSize(),
+                    onTapFrequency = viewModel::placeMarkerAtFrequency,
+                )
             }
 
-            if (state.mode == MeasurementMode.SPECTRUM && state.channelPowerEnabled) {
+            if (state.channelPowerEnabled) {
                 Spacer(Modifier.height(6.dp))
                 ChannelPowerBar(state)
             }
@@ -108,31 +99,15 @@ fun SpectrumApp(viewModel: SpectrumViewModel = viewModel()) {
 }
 
 @Composable
-private fun TopBar(
-    state: SpectrumUiState,
-    onModeSelected: (MeasurementMode) -> Unit,
-    onSettingsClick: () -> Unit,
-) {
+private fun TopBar(onSettingsClick: () -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
         Text(
-            "Spectrum Check",
+            "Spectrum Check - LTE UL",
             color = AnalyzerColors.TextPrimary,
             fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f),
         )
-        Spacer(Modifier.width(12.dp))
-        Row(
-            Modifier.horizontalScroll(rememberScrollState()).weight(1f),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            MeasurementMode.entries.forEach { mode ->
-                FilterChip(
-                    selected = state.mode == mode,
-                    onClick = { onModeSelected(mode) },
-                    label = { Text(mode.label, fontSize = 12.sp) },
-                )
-            }
-        }
         IconButton(onClick = onSettingsClick) {
             Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = AnalyzerColors.TextSecondary)
         }
@@ -220,11 +195,7 @@ private fun BottomInfoBar(state: SpectrumUiState) {
     // USB SDR dongles ignore the requested span and always capture their fixed sample-rate
     // bandwidth (~2.4 MHz for RTL-SDR, 8 MHz for HackRF), so once a real frame has arrived, show
     // what was actually captured rather than echoing back the (unused) requested span.
-    val displaySpanMhz = if (state.mode == MeasurementMode.SPECTRUM) {
-        state.spectrumFrame?.let { it.stopMhz - it.startMhz } ?: config.spanMhz
-    } else {
-        config.spanMhz
-    }
+    val displaySpanMhz = state.spectrumFrame?.let { it.stopMhz - it.startMhz } ?: config.spanMhz
     val isUncalibrated = state.dataSourceMode == DataSourceMode.USB_SDR
     Row(
         Modifier
@@ -238,11 +209,10 @@ private fun BottomInfoBar(state: SpectrumUiState) {
         if (config.refLevelOffsetDb != 0.0) {
             InfoField("Offset", "%.1f dB".format(config.refLevelOffsetDb))
         }
-        InfoField("Dir", config.direction.name)
         Spacer(Modifier.weight(1f))
         InfoField("Source", state.dataSourceLabel)
     }
-    if (isUncalibrated && state.mode == MeasurementMode.SPECTRUM) {
+    if (isUncalibrated) {
         Text(
             "USB SDR's own gain chain is relative (uncalibrated), not absolute dBm - the Ref level offset above " +
                 "only corrects for port/cable loss you entered, not this. Do not use for pass/fail power limits.",
@@ -266,43 +236,6 @@ private fun InfoField(label: String, value: String) {
     Column {
         Text(label, color = AnalyzerColors.TextSecondary, fontSize = 10.sp)
         Text(value, color = AnalyzerColors.TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-    }
-}
-
-@Composable
-private fun CableLossPanel(state: SpectrumUiState, viewModel: SpectrumViewModel) {
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(AnalyzerColors.Panel, MaterialTheme.shapes.medium)
-            .padding(16.dp),
-    ) {
-        Text("Cable Loss Measurement", color = AnalyzerColors.TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = if (state.cableLossLengthM == 0.0) "" else state.cableLossLengthM.toString(),
-            onValueChange = { it.toDoubleOrNull()?.let(viewModel::setCableLossLengthM) },
-            label = { Text("Cable length (m)") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.width(220.dp),
-        )
-        Spacer(Modifier.height(12.dp))
-        Button(onClick = viewModel::measureCableLoss, enabled = !state.cableLossLoading) {
-            Text(if (state.cableLossLoading) "Measuring..." else "Measure")
-        }
-        Spacer(Modifier.height(16.dp))
-        state.cableLossResult?.let { result ->
-            Text(
-                "Measured loss: %.2f dB over %.1f m".format(result.measuredLossDb, result.lengthM),
-                color = AnalyzerColors.Trace,
-                fontSize = 14.sp,
-            )
-            Text(
-                "Normalized: %.2f dB / 100 m at %.1f MHz".format(result.lossPer100mDb, state.config.centerMhz),
-                color = AnalyzerColors.TextSecondary,
-                fontSize = 12.sp,
-            )
-        }
     }
 }
 
@@ -365,16 +298,6 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                     label = { Text("Ref level offset (dB)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 )
-                Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    Text(if (state.config.direction == LinkDirection.TX) "TX" else "RX")
-                    Switch(
-                        checked = state.config.direction == LinkDirection.TX,
-                        onCheckedChange = {
-                            viewModel.setDirection(if (it) LinkDirection.TX else LinkDirection.RX)
-                        },
-                    )
-                }
                 Spacer(Modifier.height(12.dp))
                 Text("Data source", fontSize = 12.sp, color = AnalyzerColors.TextSecondary)
                 Spacer(Modifier.height(4.dp))
