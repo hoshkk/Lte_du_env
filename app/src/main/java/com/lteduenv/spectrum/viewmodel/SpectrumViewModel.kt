@@ -154,6 +154,12 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
         _uiState.update { it.copy(config = it.config.copy(refLevelDbm = value)) }
     }
 
+    /** Front-end RF preamp (HackRF's AMP stage only - see [SweepConfig.preampEnabled]). */
+    fun setPreampEnabled(enabled: Boolean) {
+        _uiState.update { it.copy(config = it.config.copy(preampEnabled = enabled)) }
+        restartReadingLoop()
+    }
+
     fun selectMarker(index: Int) {
         _uiState.update { it.copy(selectedMarker = index) }
     }

@@ -349,6 +349,21 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                         color = AnalyzerColors.TextSecondary,
                     )
                     Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Text("Preamp (HackRF only)", fontSize = 12.sp, color = AnalyzerColors.TextSecondary)
+                        Switch(
+                            checked = state.config.preampEnabled,
+                            onCheckedChange = viewModel::setPreampEnabled,
+                        )
+                    }
+                    Text(
+                        "Boosts sensitivity for weak signals (~+14dB front-end amp) at the cost of headroom - " +
+                            "turn it off if a strong nearby signal starts clipping/flattening at the top of the trace. " +
+                            "No effect on RTL-SDR, which always runs automatic gain.",
+                        fontSize = 11.sp,
+                        color = AnalyzerColors.TextSecondary,
+                    )
+                    Spacer(Modifier.height(8.dp))
                     Button(onClick = viewModel::connectUsbSdr) { Text("Connect USB SDR") }
                     state.sourceStatusMessage?.let {
                         Spacer(Modifier.height(4.dp))

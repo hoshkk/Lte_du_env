@@ -167,7 +167,7 @@ class UsbSdrDataSource(context: Context) : RepeaterDataSource {
         hackRf.setFrequency((config.centerMhz * 1_000_000.0).toLong())
         hackRf.setLnaGain(24)
         hackRf.setVgaGain(20)
-        hackRf.setAmpEnable(false)
+        hackRf.setAmpEnable(config.preampEnabled)
 
         val fftSize = 2048
         val bytesNeeded = fftSize * 2 // one byte per I or Q sample (signed 8-bit)

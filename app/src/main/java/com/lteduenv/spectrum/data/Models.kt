@@ -57,6 +57,12 @@ data class SweepConfig(
     val rbwKhz: Double = 100.0,
     val vbwKhz: Double = 100.0,
     val direction: LinkDirection = LinkDirection.RX,
+    /**
+     * Front-end RF preamp, like a spectrum analyzer's Preamp toggle - trades headroom for
+     * sensitivity. Only HackRF has this (its ~14dB broadband AMP stage); RTL-SDR ignores it since
+     * its tuner is always run in automatic-gain mode.
+     */
+    val preampEnabled: Boolean = false,
 ) {
     val startMhz: Double get() = centerMhz - spanMhz / 2.0
     val stopMhz: Double get() = centerMhz + spanMhz / 2.0
