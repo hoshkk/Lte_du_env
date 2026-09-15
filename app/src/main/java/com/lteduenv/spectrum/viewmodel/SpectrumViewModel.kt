@@ -61,6 +61,9 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
 
     private var readingJob: Job? = null
 
+    /** Running VBW trace average - see [applyVbwSmoothing]; reset whenever the sweep restarts. */
+    private var vbwAverage: FloatArray? = null
+
     init {
         restartReadingLoop()
     }
@@ -68,6 +71,7 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
     private fun restartReadingLoop() {
         val state = _uiState.value
         val previousJob = readingJob
+        vbwAverage = null
         // Clear stale frames so a leftover trace from the previous mode/source doesn't linger
         // on screen until the new source produces its first frame.
         _uiState.update { it.copy(spectrumFrame = null, vswrFrame = null, dtfFrame = null) }
@@ -78,7 +82,8 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
             try {
                 when (state.mode) {
                     MeasurementMode.SPECTRUM -> dataSource.spectrum(state.config).collect { frame ->
-                        val adjusted = applyRefLevelOffset(frame, state.config.refLevelOffsetDb)
+                        val offsetApplied = applyRefLevelOffset(frame, state.config.refLevelOffsetDb)
+                        val adjusted = applyVbwSmoothing(offsetApplied, state.config.rbwKhz, state.config.vbwKhz)
                         _uiState.update {
                             it.copy(
                                 spectrumFrame = adjusted,
@@ -113,6 +118,28 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
         if (offsetDb == 0.0) return frame
         val offset = offsetDb.toFloat()
         return frame.copy(levelsDbm = FloatArray(frame.levelsDbm.size) { frame.levelsDbm[it] + offset })
+    }
+
+    /**
+     * Video-bandwidth trace smoothing, like a real analyzer's VBW: an exponential moving average
+     * across successive sweeps, applied per point. A VBW narrower than the RBW smooths out noise
+     * fluctuations at the cost of a slower-responding trace; VBW >= RBW (the usual default) turns
+     * smoothing off, matching real instrument behavior.
+     */
+    private fun applyVbwSmoothing(frame: SpectrumFrame, rbwKhz: Double, vbwKhz: Double): SpectrumFrame {
+        if (vbwKhz >= rbwKhz) {
+            vbwAverage = null
+            return frame
+        }
+        val alpha = (vbwKhz / rbwKhz).toFloat().coerceIn(0.02f, 1f)
+        val previous = vbwAverage
+        val smoothed = if (previous != null && previous.size == frame.levelsDbm.size) {
+            FloatArray(frame.levelsDbm.size) { i -> previous[i] + alpha * (frame.levelsDbm[i] - previous[i]) }
+        } else {
+            frame.levelsDbm.copyOf()
+        }
+        vbwAverage = smoothed
+        return frame.copy(levelsDbm = smoothed)
     }
 
     fun selectMode(mode: MeasurementMode) {
@@ -171,6 +198,18 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
     /** REF LEVEL OFFSET calibration - see [SweepConfig.refLevelOffsetDb]. */
     fun setRefLevelOffsetDb(value: Double) {
         _uiState.update { it.copy(config = it.config.copy(refLevelOffsetDb = value)) }
+        restartReadingLoop()
+    }
+
+    /** Resolution bandwidth - on the USB SDR source this directly drives the FFT size used. */
+    fun setRbwKhz(value: Double) {
+        _uiState.update { it.copy(config = it.config.copy(rbwKhz = value.coerceIn(1.0, 1_000.0))) }
+        restartReadingLoop()
+    }
+
+    /** Video bandwidth - see [applyVbwSmoothing]. */
+    fun setVbwKhz(value: Double) {
+        _uiState.update { it.copy(config = it.config.copy(vbwKhz = value.coerceIn(0.1, 1_000.0))) }
         restartReadingLoop()
     }
 

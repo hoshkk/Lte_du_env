@@ -135,7 +135,7 @@ class UsbSdrDataSource(context: Context) : RepeaterDataSource {
         tuner.tunedFrequency = (config.centerMhz * 1_000_000.0).toLong()
         tuner.setGain(TunerGain.AutomaticGain)
 
-        val fftSize = 2048
+        val fftSize = fftSizeForRbw(config.rbwKhz * 1_000.0, sampleRate.rate.toDouble())
         val floatsNeeded = fftSize * 2
         val pending = ArrayDeque<Float>()
         val iqChannel = requireNotNull(rtlUsbController).start()
@@ -169,7 +169,7 @@ class UsbSdrDataSource(context: Context) : RepeaterDataSource {
         hackRf.setVgaGain(20)
         hackRf.setAmpEnable(config.preampEnabled)
 
-        val fftSize = 2048
+        val fftSize = fftSizeForRbw(config.rbwKhz * 1_000.0, HackRfController.SAMPLE_RATE_HZ.toDouble())
         val bytesNeeded = fftSize * 2 // one byte per I or Q sample (signed 8-bit)
         val pending = ArrayDeque<Byte>()
         val iqChannel = hackRf.startRx()
@@ -195,6 +195,20 @@ class UsbSdrDataSource(context: Context) : RepeaterDataSource {
         }
     }
 
+    /**
+     * Picks the FFT size whose bin width (sampleRateHz / size) is closest to the requested RBW,
+     * mirroring a real analyzer's RBW control - a narrower RBW gives finer frequency resolution
+     * (bigger FFT) at the cost of a slower update rate, and vice versa. Our FFT is radix-2, so
+     * the result is always rounded to a power of two, and clamped to [MIN_FFT_SIZE, MAX_FFT_SIZE]
+     * so an extreme RBW value can't demand an unreasonably huge or tiny FFT.
+     */
+    private fun fftSizeForRbw(rbwHz: Double, sampleRateHz: Double): Int {
+        val raw = (sampleRateHz / rbwHz.coerceAtLeast(1.0)).toInt().coerceIn(MIN_FFT_SIZE, MAX_FFT_SIZE)
+        val lower = Integer.highestOneBit(raw)
+        val upper = if (lower < MAX_FFT_SIZE) lower shl 1 else lower
+        return if (raw - lower <= upper - raw) lower else upper
+    }
+
     // Neither dongle has a directional coupler, so none of these can be measured.
     override fun vswr(config: SweepConfig): Flow<VswrFrame> = emptyFlow()
 
@@ -209,5 +223,8 @@ class UsbSdrDataSource(context: Context) : RepeaterDataSource {
     companion object {
         private const val RTL_SDR_VENDOR_ID = 0x0bda
         private val RTL_SDR_PRODUCT_IDS = setOf(0x2832, 0x2838)
+
+        private const val MIN_FFT_SIZE = 256
+        private const val MAX_FFT_SIZE = 8192
     }
 }

@@ -278,6 +278,8 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
     var spanText by remember(state.config.spanMhz) { mutableStateOf(state.config.spanMhz.toString()) }
     var refText by remember(state.config.refLevelDbm) { mutableStateOf(state.config.refLevelDbm.toString()) }
     var refOffsetText by remember(state.config.refLevelOffsetDb) { mutableStateOf(state.config.refLevelOffsetDb.toString()) }
+    var rbwText by remember(state.config.rbwKhz) { mutableStateOf(state.config.rbwKhz.toString()) }
+    var vbwText by remember(state.config.vbwKhz) { mutableStateOf(state.config.vbwKhz.toString()) }
     var sourceMode by remember(state.dataSourceMode) { mutableStateOf(state.dataSourceMode) }
     var baseUrl by remember(state.httpBaseUrl) { mutableStateOf(state.httpBaseUrl) }
 
@@ -298,6 +300,29 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                     onValueChange = { spanText = it },
                     label = { Text("Span (MHz)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = rbwText,
+                        onValueChange = { rbwText = it },
+                        label = { Text("RBW (kHz)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = vbwText,
+                        onValueChange = { vbwText = it },
+                        label = { Text("VBW (kHz)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Text(
+                    "RBW은 USB SDR 모드에서 실제 FFT 해상도를 바꿉니다 (좁을수록 정밀, 대신 갱신 느려짐). " +
+                        "VBW를 RBW보다 좁게 주면 트레이스가 스무딩되고, VBW ≥ RBW면 스무딩 없음 (기본값).",
+                    fontSize = 11.sp,
+                    color = AnalyzerColors.TextSecondary,
                 )
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
@@ -394,6 +419,8 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
             Button(onClick = {
                 centerText.toDoubleOrNull()?.let(viewModel::setCenterMhz)
                 spanText.toDoubleOrNull()?.let(viewModel::setSpanMhz)
+                rbwText.toDoubleOrNull()?.let(viewModel::setRbwKhz)
+                vbwText.toDoubleOrNull()?.let(viewModel::setVbwKhz)
                 refText.toDoubleOrNull()?.let(viewModel::setRefLevelDbm)
                 refOffsetText.toDoubleOrNull()?.let(viewModel::setRefLevelOffsetDb)
                 if (sourceMode != DataSourceMode.USB_SDR) {
