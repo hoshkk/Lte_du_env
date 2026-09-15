@@ -11,8 +11,8 @@ import kotlin.random.Random
 
 /**
  * Generates physically-plausible demo readings so the UI works with no hardware attached.
- * Not measured data — swap in [HttpRepeaterDataSource] (or a new [RepeaterDataSource]) once the
- * real repeater/base station's monitoring API is available.
+ * Not measured data - switch to USB SDR mode (see [com.lteduenv.spectrum.data.sdr.UsbSdrDataSource])
+ * for a real spectrum.
  */
 class SimulatedRepeaterDataSource(
     private val random: Random = Random.Default,

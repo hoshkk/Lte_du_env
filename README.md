@@ -26,20 +26,16 @@
 
 1. **SimulatedRepeaterDataSource** (기본값) — 하드웨어 없이도 앱을 바로 사용해볼 수 있도록 노이즈
    플로어 + 가상 캐리어/반사 패턴을 실시간으로 생성합니다. **실측 데이터가 아닙니다.**
-2. **HttpRepeaterDataSource** — 중계기/기지국 장비가 노출하는 HTTP API를 폴링해 실제 TX/RX
-   스펙트럼·VSWR·DTF 값을 가져오는 뼈대(stub) 구현입니다. Settings에서 데이터 소스를
-   "Repeater HTTP"로 바꾸고 Base URL을 입력하면 이 소스로 전환됩니다.
-3. **UsbSdrDataSource** — USB SDR 동글을 USB OTG로 연결해 **실제 스펙트럼**을 잡습니다.
+2. **UsbSdrDataSource** — USB SDR 동글을 USB OTG로 연결해 **실제 스펙트럼**을 잡습니다.
    **RTL2832U(RTL-SDR)와 HackRF One을 둘 다 지원**하며, 어느 쪽을 꽂았는지 자동으로 인식합니다.
    Settings에서 "USB SDR"을 선택하고 **Connect USB SDR** 버튼을 누르면 동글을 찾아 USB 권한을
    요청합니다. 둘 다 수신 전용 동글이라 VSWR/DTF/Cable Loss는 이 모드에서도 시뮬레이션 데이터로
    남습니다. 연동에 필요한 하드웨어와 배선(커플러 → 어댑터 → 동글 → 폰)은 아래 "USB SDR 연동"
    절을 참고하세요.
 
-`HttpRepeaterDataSource`가 기대하는 JSON 스키마는 파일 상단 주석에 정리되어 있습니다. 실제 장비의
-API 문서를 받으면 요청 경로와 파싱 로직을 그 스펙에 맞게 조정하면 됩니다. VSWR/DTF는 실제로는
-방향성 커플러나 VNA 같은 RF 측정 하드웨어가 있어야 측정 가능한 값이므로, 폰 단독으로는 측정할 수
-없고 장비 쪽 API나 별도 하드웨어 연동이 필요합니다.
+VSWR/DTF는 실제로는 방향성 커플러나 VNA 같은 RF 측정 하드웨어가 있어야 측정 가능한 값이므로, 폰
+단독으로는 측정할 수 없고 장비 쪽 API나 별도 하드웨어 연동이 필요합니다. (중계기 장비가 자체 HTTP
+관리 API를 제공한다면 그걸로 붙이는 방법도 있지만, 지금은 그런 장비/API 스펙이 없어서 뺐습니다.)
 
 ## USB SDR 연동
 

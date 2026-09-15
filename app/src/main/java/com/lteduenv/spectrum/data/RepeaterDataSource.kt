@@ -4,9 +4,8 @@ import kotlinx.coroutines.flow.Flow
 
 /**
  * Abstraction over where readings come from. The app ships with [SimulatedRepeaterDataSource]
- * so the UI is fully usable with no hardware attached, and [HttpRepeaterDataSource] as a starting
- * point for wiring up a real repeater / base station's TX-RX monitoring API — point it at that
- * equipment's JSON endpoint (see HttpRepeaterDataSource for the expected schema) once it's known.
+ * so the UI is fully usable with no hardware attached, and a USB SDR-backed implementation
+ * (see [com.lteduenv.spectrum.data.sdr.UsbSdrDataSource]) for real spectrum readings.
  */
 interface RepeaterDataSource {
     val name: String

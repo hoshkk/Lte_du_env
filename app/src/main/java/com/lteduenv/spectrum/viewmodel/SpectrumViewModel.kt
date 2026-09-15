@@ -7,7 +7,6 @@ import com.lteduenv.spectrum.data.BandPreset
 import com.lteduenv.spectrum.data.BandPresets
 import com.lteduenv.spectrum.data.CableLossResult
 import com.lteduenv.spectrum.data.DtfFrame
-import com.lteduenv.spectrum.data.HttpRepeaterDataSource
 import com.lteduenv.spectrum.data.LinkDirection
 import com.lteduenv.spectrum.data.Marker
 import com.lteduenv.spectrum.data.MeasurementMode
@@ -27,7 +26,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** Which backend is currently feeding the app; mirrors the choice in the Settings dialog. */
-enum class DataSourceMode { SIMULATED, HTTP, USB_SDR }
+enum class DataSourceMode { SIMULATED, USB_SDR }
 
 data class SpectrumUiState(
     val mode: MeasurementMode = MeasurementMode.SPECTRUM,
@@ -47,7 +46,6 @@ data class SpectrumUiState(
     val cableLossLoading: Boolean = false,
     val dataSourceLabel: String = "",
     val dataSourceMode: DataSourceMode = DataSourceMode.SIMULATED,
-    val httpBaseUrl: String = "",
     /** Status/error text for the active data source (e.g. USB SDR connect progress). */
     val sourceStatusMessage: String? = null,
 ) {
@@ -286,20 +284,14 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
     }
 
     /** Switches the active [RepeaterDataSource]. For [DataSourceMode.USB_SDR], call [connectUsbSdr] first. */
-    fun applyDataSource(mode: DataSourceMode, httpBaseUrl: String) {
+    fun applyDataSource(mode: DataSourceMode) {
         dataSource = when (mode) {
             DataSourceMode.SIMULATED -> SimulatedRepeaterDataSource()
-            DataSourceMode.HTTP -> if (httpBaseUrl.isNotBlank()) {
-                HttpRepeaterDataSource(httpBaseUrl)
-            } else {
-                SimulatedRepeaterDataSource()
-            }
             DataSourceMode.USB_SDR -> usbSdrDataSource
         }
         _uiState.update {
             it.copy(
                 dataSourceMode = mode,
-                httpBaseUrl = httpBaseUrl,
                 dataSourceLabel = dataSource.name,
                 // A cable-loss reading from the old source no longer applies to the new one.
                 cableLossResult = null,
@@ -322,7 +314,7 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
         }
         if (usbSdrDataSource.hasPermission(device)) {
             _uiState.update { it.copy(sourceStatusMessage = "USB SDR connected: ${device.deviceName}") }
-            applyDataSource(DataSourceMode.USB_SDR, _uiState.value.httpBaseUrl)
+            applyDataSource(DataSourceMode.USB_SDR)
             return
         }
         _uiState.update { it.copy(sourceStatusMessage = "Requesting USB permission...") }
@@ -336,7 +328,7 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
                     },
                 )
             }
-            if (granted) applyDataSource(DataSourceMode.USB_SDR, _uiState.value.httpBaseUrl)
+            if (granted) applyDataSource(DataSourceMode.USB_SDR)
         }
     }
 

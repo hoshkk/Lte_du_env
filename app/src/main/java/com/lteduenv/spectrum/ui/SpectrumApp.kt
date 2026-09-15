@@ -315,7 +315,6 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
     var vbwText by remember(state.config.vbwKhz) { mutableStateOf(state.config.vbwKhz.toString()) }
     var integrationBwText by remember(state.config.integrationBwMhz) { mutableStateOf(state.config.integrationBwMhz.toString()) }
     var sourceMode by remember(state.dataSourceMode) { mutableStateOf(state.dataSourceMode) }
-    var baseUrl by remember(state.httpBaseUrl) { mutableStateOf(state.httpBaseUrl) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -386,22 +385,9 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                         label = { Text("Simulated", fontSize = 11.sp) },
                     )
                     FilterChip(
-                        selected = sourceMode == DataSourceMode.HTTP,
-                        onClick = { sourceMode = DataSourceMode.HTTP },
-                        label = { Text("Repeater HTTP", fontSize = 11.sp) },
-                    )
-                    FilterChip(
                         selected = sourceMode == DataSourceMode.USB_SDR,
                         onClick = { sourceMode = DataSourceMode.USB_SDR },
                         label = { Text("USB SDR", fontSize = 11.sp) },
-                    )
-                }
-                if (sourceMode == DataSourceMode.HTTP) {
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = baseUrl,
-                        onValueChange = { baseUrl = it },
-                        label = { Text("Base URL (e.g. http://192.168.1.50:8080/api)") },
                     )
                 }
                 if (sourceMode == DataSourceMode.USB_SDR) {
@@ -431,7 +417,7 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                 integrationBwText.toDoubleOrNull()?.let(viewModel::setIntegrationBwMhz)
                 refOffsetText.toDoubleOrNull()?.let(viewModel::setRefLevelOffsetDb)
                 if (sourceMode != DataSourceMode.USB_SDR) {
-                    viewModel.applyDataSource(sourceMode, baseUrl)
+                    viewModel.applyDataSource(sourceMode)
                 }
                 onDismiss()
             }) { Text("Apply") }
