@@ -10,7 +10,6 @@ import com.virginiaprivacy.sdr.tuner.TunerGain
 import kotlinx.coroutines.channels.ReceiveChannel
 import java.io.Closeable
 import java.nio.ByteBuffer
-import kotlin.reflect.KClass
 
 /**
  *
@@ -102,19 +101,5 @@ abstract class UsbController: Closeable {
     }
 
     open fun getCenterFrequency() = controller.tunedFrequency
-
-    companion object {
-        private val instanceMap = mutableMapOf<String, UsbController>()
-
-        @JvmStatic
-        fun <T : UsbController> getInstance(kClass: KClass<T>): T = instanceMap.getOrPut(kClass.qualifiedName!!) {
-            val instance =
-                kClass.javaObjectType.constructors.firstOrNull { it.parameterCount == 0 && it.trySetAccessible() }
-                    ?.newInstance(null) ?: throw IllegalStateException("No default constructor found for ${kClass.qualifiedName}")
-            instance as T
-        } as T
-
-    }
-
 }
 
