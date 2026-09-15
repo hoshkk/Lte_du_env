@@ -15,7 +15,10 @@ class R820TTunerController(
     override val tunerType: TunerType = TunerType.RAFAELMICRO_R820T
 ) :
     RTL2832TunerController(usbController) {
-    private val mI2CAddress: Byte = 52
+    // R828D uses I2C address 0x74 (116); R820T/R820T2 use 0x34 (52) - see TunerTypeCheck's
+    // R820T/R828D entries. The original vendored code hardcoded 52 for both, so an R828D dongle
+    // would have every tuner register read/write silently sent to the wrong I2C address.
+    private val mI2CAddress: Byte = if (tunerType == TunerType.RAFAELMICRO_R828D) 116 else 52
     private val mShadowRegister = intArrayOf(
         0,
         0,

@@ -19,6 +19,7 @@ import com.lteduenv.spectrum.data.VswrFrame
 import com.lteduenv.spectrum.data.sdr.UsbSdrDataSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -65,9 +66,15 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun restartReadingLoop() {
-        readingJob?.cancel()
         val state = _uiState.value
+        val previousJob = readingJob
+        // Clear stale frames so a leftover trace from the previous mode/source doesn't linger
+        // on screen until the new source produces its first frame.
+        _uiState.update { it.copy(spectrumFrame = null, vswrFrame = null, dtfFrame = null) }
         readingJob = viewModelScope.launch {
+            // Wait for the previous job (and its stopRx()/cleanup) to fully finish before this
+            // one starts collecting, so its teardown can't run after - and turn off - the new job.
+            previousJob?.cancelAndJoin()
             try {
                 when (state.mode) {
                     MeasurementMode.SPECTRUM -> dataSource.spectrum(state.config).collect { frame ->
@@ -110,15 +117,26 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
         _uiState.update {
             it.copy(
                 selectedBandId = preset.id,
-                config = it.config.copy(centerMhz = preset.centerMhz, spanMhz = preset.spanMhz),
+                config = it.config.copy(
+                    centerMhz = preset.centerMhzFor(it.config.direction),
+                    spanMhz = preset.spanMhz,
+                ),
             )
         }
         restartReadingLoop()
     }
 
+    /**
+     * Switches TX/RX. When a band preset is selected, this retunes to that band's downlink (TX)
+     * or uplink (RX) center frequency - otherwise only the direction label changes, since a
+     * manually-entered frequency has no known paired uplink/downlink counterpart to jump to.
+     */
     fun setDirection(direction: LinkDirection) {
         if (_uiState.value.config.direction == direction) return
-        _uiState.update { it.copy(config = it.config.copy(direction = direction)) }
+        _uiState.update { state ->
+            val newCenterMhz = state.selectedBand?.centerMhzFor(direction) ?: state.config.centerMhz
+            state.copy(config = state.config.copy(direction = direction, centerMhz = newCenterMhz))
+        }
         restartReadingLoop()
     }
 
@@ -206,7 +224,13 @@ class SpectrumViewModel(application: Application) : AndroidViewModel(application
             DataSourceMode.USB_SDR -> usbSdrDataSource
         }
         _uiState.update {
-            it.copy(dataSourceMode = mode, httpBaseUrl = httpBaseUrl, dataSourceLabel = dataSource.name)
+            it.copy(
+                dataSourceMode = mode,
+                httpBaseUrl = httpBaseUrl,
+                dataSourceLabel = dataSource.name,
+                // A cable-loss reading from the old source no longer applies to the new one.
+                cableLossResult = null,
+            )
         }
         restartReadingLoop()
     }

@@ -182,6 +182,15 @@ private fun MarkerRow(
 @Composable
 private fun BottomInfoBar(state: SpectrumUiState) {
     val config = state.config
+    // USB SDR dongles ignore the requested span and always capture their fixed sample-rate
+    // bandwidth (~2.4 MHz for RTL-SDR, 8 MHz for HackRF), so once a real frame has arrived, show
+    // what was actually captured rather than echoing back the (unused) requested span.
+    val displaySpanMhz = if (state.mode == MeasurementMode.SPECTRUM) {
+        state.spectrumFrame?.let { it.stopMhz - it.startMhz } ?: config.spanMhz
+    } else {
+        config.spanMhz
+    }
+    val isUncalibrated = state.dataSourceMode == DataSourceMode.USB_SDR
     Row(
         Modifier
             .fillMaxWidth()
@@ -190,11 +199,19 @@ private fun BottomInfoBar(state: SpectrumUiState) {
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         InfoField("Center", "%.2f MHz".format(config.centerMhz))
-        InfoField("Span", "%.2f MHz".format(config.spanMhz))
+        InfoField("Span", "%.2f MHz".format(displaySpanMhz))
         InfoField("Ref", "%.1f dBm".format(config.refLevelDbm))
         InfoField("Dir", config.direction.name)
         Spacer(Modifier.weight(1f))
         InfoField("Source", state.dataSourceLabel)
+    }
+    if (isUncalibrated && state.mode == MeasurementMode.SPECTRUM) {
+        Text(
+            "USB SDR levels are relative (uncalibrated) dB, not absolute dBm - do not use for pass/fail power limits.",
+            color = AnalyzerColors.Warn,
+            fontSize = 11.sp,
+            modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+        )
     }
     state.sourceStatusMessage?.let { message ->
         Text(
@@ -325,7 +342,9 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                 if (sourceMode == DataSourceMode.USB_SDR) {
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Spectrum only - RTL-SDR/HackRF dongles are receive-only, so VSWR/DTF/Cable Loss stay simulated.",
+                        "Spectrum only - RTL-SDR/HackRF dongles are receive-only, so VSWR/DTF/Cable Loss stay simulated. " +
+                            "Span above is ignored: each dongle always captures its fixed sample-rate bandwidth " +
+                            "(~2.4 MHz for RTL-SDR, 8 MHz for HackRF) around the center frequency.",
                         fontSize = 11.sp,
                         color = AnalyzerColors.TextSecondary,
                     )

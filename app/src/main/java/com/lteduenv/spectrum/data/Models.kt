@@ -11,25 +11,41 @@ enum class MeasurementMode(val label: String) {
     CABLE_LOSS("Cable Loss"),
 }
 
-/** A tappable band button, e.g. "5A", "LTE B3", matching the row of preset buttons in the photo. */
+/**
+ * A tappable band button, e.g. "5A", "LTE B3", matching the row of preset buttons in the photo.
+ *
+ * [downlinkMhz] is the network-transmit / UE-receive center frequency (TX side, per
+ * [LinkDirection]); [uplinkMhz] is the UE-transmit / network-receive center frequency (RX side).
+ * For TDD bands (e.g. NR n78) uplink and downlink share the same frequency.
+ */
 data class BandPreset(
     val id: String,
     val label: String,
     val system: String,
-    val centerMhz: Double,
+    val downlinkMhz: Double,
+    val uplinkMhz: Double,
     val spanMhz: Double,
-)
+) {
+    fun centerMhzFor(direction: LinkDirection): Double =
+        if (direction == LinkDirection.TX) downlinkMhz else uplinkMhz
+}
 
 object BandPresets {
     val all = listOf(
-        BandPreset("b5a", "5A", "CDMA/LTE", centerMhz = 834.0, spanMhz = 10.0),
-        BandPreset("lte_b1", "LTE B1", "LTE", centerMhz = 1950.0, spanMhz = 60.0),
-        BandPreset("lte_b3", "LTE B3", "LTE", centerMhz = 1842.5, spanMhz = 75.0),
-        BandPreset("lte_b5", "LTE B5", "LTE", centerMhz = 836.5, spanMhz = 25.0),
-        BandPreset("lte_b7", "LTE B7", "LTE", centerMhz = 2655.0, spanMhz = 70.0),
-        BandPreset("lte_b8", "LTE B8", "LTE", centerMhz = 897.5, spanMhz = 35.0),
-        BandPreset("nr_n78", "NR n78", "5G NR", centerMhz = 3600.0, spanMhz = 400.0),
-        BandPreset("nr_n28", "NR n28", "5G NR", centerMhz = 757.5, spanMhz = 45.0),
+        // Korean domestic "5A" 800 MHz band: only the single frequency confirmed from the
+        // reference field-instrument photo (829-839 MHz sweep centered at 834.0) is used for
+        // both sides here, since the paired uplink/downlink split for this specific domestic
+        // band plan isn't confidently known - deliberately not guessing a duplex offset.
+        BandPreset("b5a", "5A", "CDMA/LTE", downlinkMhz = 834.0, uplinkMhz = 834.0, spanMhz = 10.0),
+        // Standard 3GPP FDD band plans below (uplink = UE tx / network rx, downlink = network tx).
+        BandPreset("lte_b1", "LTE B1", "LTE", downlinkMhz = 2140.0, uplinkMhz = 1950.0, spanMhz = 60.0),
+        BandPreset("lte_b3", "LTE B3", "LTE", downlinkMhz = 1842.5, uplinkMhz = 1747.5, spanMhz = 75.0),
+        BandPreset("lte_b5", "LTE B5", "LTE", downlinkMhz = 881.5, uplinkMhz = 836.5, spanMhz = 25.0),
+        BandPreset("lte_b7", "LTE B7", "LTE", downlinkMhz = 2655.0, uplinkMhz = 2535.0, spanMhz = 70.0),
+        BandPreset("lte_b8", "LTE B8", "LTE", downlinkMhz = 942.5, uplinkMhz = 897.5, spanMhz = 35.0),
+        // n78 is TDD: uplink and downlink share the same frequency, just time-multiplexed.
+        BandPreset("nr_n78", "NR n78", "5G NR", downlinkMhz = 3600.0, uplinkMhz = 3600.0, spanMhz = 400.0),
+        BandPreset("nr_n28", "NR n28", "5G NR", downlinkMhz = 780.5, uplinkMhz = 725.5, spanMhz = 45.0),
     )
 }
 

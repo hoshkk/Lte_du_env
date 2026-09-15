@@ -41,7 +41,10 @@ class HackRfController(
     fun open() {
         connection = usbManager.openDevice(device)
             ?: error("Could not open HackRF USB device.")
-        connection.claimInterface(usbInterface, true)
+        if (!connection.claimInterface(usbInterface, true)) {
+            connection.close()
+            error("Could not claim HackRF USB interface (already in use by another app?).")
+        }
     }
 
     fun close() {

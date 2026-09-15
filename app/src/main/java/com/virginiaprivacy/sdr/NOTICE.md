@@ -28,3 +28,9 @@ organization — see the project README for a plain-language summary.
   signature). The Android-side USB glue in this app
   (`com.lteduenv.spectrum.data.sdr.RtlSdrUsbController`) is written from
   scratch against the `UsbController` abstract class here instead.
+- Fixed a bug in `R820TTunerController`: the upstream code hardcoded the
+  tuner's I2C address to `0x34` (R820T/R820T2's address) regardless of
+  which chip was actually detected, so every register read/write for an
+  R828D-equipped dongle would have gone to the wrong I2C address (R828D's
+  real address is `0x74`, per `TunerTypeCheck.R828D`). The address is now
+  chosen from the detected `tunerType`.
