@@ -1,6 +1,7 @@
 package com.lteduenv.spectrum.viewmodel
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.lteduenv.spectrum.data.BandPreset
 import com.lteduenv.spectrum.data.BandPresets
@@ -15,12 +16,17 @@ import com.lteduenv.spectrum.data.SimulatedRepeaterDataSource
 import com.lteduenv.spectrum.data.SpectrumFrame
 import com.lteduenv.spectrum.data.SweepConfig
 import com.lteduenv.spectrum.data.VswrFrame
+import com.lteduenv.spectrum.data.sdr.UsbSdrDataSource
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+
+/** Which backend is currently feeding the app; mirrors the choice in the Settings dialog. */
+enum class DataSourceMode { SIMULATED, HTTP, USB_SDR }
 
 data class SpectrumUiState(
     val mode: MeasurementMode = MeasurementMode.SPECTRUM,
@@ -35,18 +41,19 @@ data class SpectrumUiState(
     val cableLossLengthM: Double = 50.0,
     val cableLossLoading: Boolean = false,
     val dataSourceLabel: String = "",
-    val useHttpSource: Boolean = false,
+    val dataSourceMode: DataSourceMode = DataSourceMode.SIMULATED,
     val httpBaseUrl: String = "",
+    /** Status/error text for the active data source (e.g. USB SDR connect progress). */
+    val sourceStatusMessage: String? = null,
 ) {
     val selectedBand: BandPreset? get() = BandPresets.all.find { it.id == selectedBandId }
 }
 
-class SpectrumViewModel : ViewModel() {
+class SpectrumViewModel(application: Application) : AndroidViewModel(application) {
 
-    // The Compose `viewModel()` factory instantiates this via a no-arg constructor, so the
-    // starting data source is fixed here rather than injected; swap sources at runtime via
-    // applyDataSource() instead (see the Settings dialog).
     private var dataSource: RepeaterDataSource = SimulatedRepeaterDataSource()
+
+    private val usbSdrDataSource by lazy { UsbSdrDataSource(getApplication()) }
 
     private val _uiState = MutableStateFlow(SpectrumUiState(dataSourceLabel = dataSource.name))
     val uiState: StateFlow<SpectrumUiState> = _uiState.asStateFlow()
@@ -61,21 +68,31 @@ class SpectrumViewModel : ViewModel() {
         readingJob?.cancel()
         val state = _uiState.value
         readingJob = viewModelScope.launch {
-            when (state.mode) {
-                MeasurementMode.SPECTRUM -> dataSource.spectrum(state.config).collect { frame ->
-                    _uiState.update {
-                        it.copy(spectrumFrame = frame, markers = refreshMarkerLevels(it.markers, frame))
+            try {
+                when (state.mode) {
+                    MeasurementMode.SPECTRUM -> dataSource.spectrum(state.config).collect { frame ->
+                        _uiState.update {
+                            it.copy(
+                                spectrumFrame = frame,
+                                markers = refreshMarkerLevels(it.markers, frame),
+                                sourceStatusMessage = null,
+                            )
+                        }
+                    }
+                    MeasurementMode.VSWR -> dataSource.vswr(state.config).collect { frame ->
+                        _uiState.update { it.copy(vswrFrame = frame, sourceStatusMessage = null) }
+                    }
+                    MeasurementMode.DTF -> dataSource.dtf(state.config).collect { frame ->
+                        _uiState.update { it.copy(dtfFrame = frame, sourceStatusMessage = null) }
+                    }
+                    MeasurementMode.CABLE_LOSS -> {
+                        // No continuous stream here; the user triggers a one-shot measurement.
                     }
                 }
-                MeasurementMode.VSWR -> dataSource.vswr(state.config).collect { frame ->
-                    _uiState.update { it.copy(vswrFrame = frame) }
-                }
-                MeasurementMode.DTF -> dataSource.dtf(state.config).collect { frame ->
-                    _uiState.update { it.copy(dtfFrame = frame) }
-                }
-                MeasurementMode.CABLE_LOSS -> {
-                    // No continuous stream here; the user triggers a one-shot measurement.
-                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _uiState.update { it.copy(sourceStatusMessage = e.message ?: "Data source error") }
             }
         }
     }
@@ -166,24 +183,64 @@ class SpectrumViewModel : ViewModel() {
             _uiState.update { it.copy(cableLossLoading = true) }
             val result = runCatching {
                 dataSource.measureCableLoss(_uiState.value.config, _uiState.value.cableLossLengthM)
-            }.getOrNull()
+            }
             _uiState.update {
-                it.copy(cableLossLoading = false, cableLossResult = result ?: it.cableLossResult)
+                it.copy(
+                    cableLossLoading = false,
+                    cableLossResult = result.getOrNull() ?: it.cableLossResult,
+                    sourceStatusMessage = result.exceptionOrNull()?.message ?: it.sourceStatusMessage,
+                )
             }
         }
     }
 
-    /** Switches between the built-in demo generator and a real repeater/base station HTTP API. */
-    fun applyDataSource(useHttp: Boolean, baseUrl: String) {
-        dataSource = if (useHttp && baseUrl.isNotBlank()) {
-            HttpRepeaterDataSource(baseUrl)
-        } else {
-            SimulatedRepeaterDataSource()
+    /** Switches the active [RepeaterDataSource]. For [DataSourceMode.USB_SDR], call [connectUsbSdr] first. */
+    fun applyDataSource(mode: DataSourceMode, httpBaseUrl: String) {
+        dataSource = when (mode) {
+            DataSourceMode.SIMULATED -> SimulatedRepeaterDataSource()
+            DataSourceMode.HTTP -> if (httpBaseUrl.isNotBlank()) {
+                HttpRepeaterDataSource(httpBaseUrl)
+            } else {
+                SimulatedRepeaterDataSource()
+            }
+            DataSourceMode.USB_SDR -> usbSdrDataSource
         }
         _uiState.update {
-            it.copy(useHttpSource = useHttp, httpBaseUrl = baseUrl, dataSourceLabel = dataSource.name)
+            it.copy(dataSourceMode = mode, httpBaseUrl = httpBaseUrl, dataSourceLabel = dataSource.name)
         }
         restartReadingLoop()
+    }
+
+    /**
+     * Looks for an attached RTL-SDR dongle, requests USB permission if needed (shows a system
+     * dialog), and on success switches to [DataSourceMode.USB_SDR]. Safe to call repeatedly.
+     */
+    fun connectUsbSdr() {
+        val device = usbSdrDataSource.findSupportedDevice()
+        if (device == null) {
+            _uiState.update {
+                it.copy(sourceStatusMessage = "No RTL-SDR dongle found. Check the USB OTG connection.")
+            }
+            return
+        }
+        if (usbSdrDataSource.hasPermission(device)) {
+            _uiState.update { it.copy(sourceStatusMessage = "USB SDR connected: ${device.deviceName}") }
+            applyDataSource(DataSourceMode.USB_SDR, _uiState.value.httpBaseUrl)
+            return
+        }
+        _uiState.update { it.copy(sourceStatusMessage = "Requesting USB permission...") }
+        usbSdrDataSource.requestPermission(device) { granted ->
+            _uiState.update {
+                it.copy(
+                    sourceStatusMessage = if (granted) {
+                        "USB SDR connected: ${device.deviceName}"
+                    } else {
+                        "USB permission denied."
+                    },
+                )
+            }
+            if (granted) applyDataSource(DataSourceMode.USB_SDR, _uiState.value.httpBaseUrl)
+        }
     }
 
     override fun onCleared() {

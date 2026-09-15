@@ -44,6 +44,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.lteduenv.spectrum.data.BandPresets
 import com.lteduenv.spectrum.data.LinkDirection
 import com.lteduenv.spectrum.data.MeasurementMode
+import com.lteduenv.spectrum.viewmodel.DataSourceMode
 import com.lteduenv.spectrum.viewmodel.SpectrumUiState
 import com.lteduenv.spectrum.viewmodel.SpectrumViewModel
 
@@ -195,6 +196,14 @@ private fun BottomInfoBar(state: SpectrumUiState) {
         Spacer(Modifier.weight(1f))
         InfoField("Source", state.dataSourceLabel)
     }
+    state.sourceStatusMessage?.let { message ->
+        Text(
+            message,
+            color = AnalyzerColors.Warn,
+            fontSize = 11.sp,
+            modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+        )
+    }
 }
 
 @Composable
@@ -247,7 +256,7 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
     var centerText by remember(state.config.centerMhz) { mutableStateOf(state.config.centerMhz.toString()) }
     var spanText by remember(state.config.spanMhz) { mutableStateOf(state.config.spanMhz.toString()) }
     var refText by remember(state.config.refLevelDbm) { mutableStateOf(state.config.refLevelDbm.toString()) }
-    var useHttp by remember(state.useHttpSource) { mutableStateOf(state.useHttpSource) }
+    var sourceMode by remember(state.dataSourceMode) { mutableStateOf(state.dataSourceMode) }
     var baseUrl by remember(state.httpBaseUrl) { mutableStateOf(state.httpBaseUrl) }
 
     AlertDialog(
@@ -286,18 +295,46 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                     )
                 }
                 Spacer(Modifier.height(12.dp))
-                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    Text("Use repeater HTTP API", fontSize = 12.sp)
-                    Spacer(Modifier.width(8.dp))
-                    Switch(checked = useHttp, onCheckedChange = { useHttp = it })
+                Text("Data source", fontSize = 12.sp, color = AnalyzerColors.TextSecondary)
+                Spacer(Modifier.height(4.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(
+                        selected = sourceMode == DataSourceMode.SIMULATED,
+                        onClick = { sourceMode = DataSourceMode.SIMULATED },
+                        label = { Text("Simulated", fontSize = 11.sp) },
+                    )
+                    FilterChip(
+                        selected = sourceMode == DataSourceMode.HTTP,
+                        onClick = { sourceMode = DataSourceMode.HTTP },
+                        label = { Text("Repeater HTTP", fontSize = 11.sp) },
+                    )
+                    FilterChip(
+                        selected = sourceMode == DataSourceMode.USB_SDR,
+                        onClick = { sourceMode = DataSourceMode.USB_SDR },
+                        label = { Text("USB SDR", fontSize = 11.sp) },
+                    )
                 }
-                if (useHttp) {
+                if (sourceMode == DataSourceMode.HTTP) {
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = baseUrl,
                         onValueChange = { baseUrl = it },
                         label = { Text("Base URL (e.g. http://192.168.1.50:8080/api)") },
                     )
+                }
+                if (sourceMode == DataSourceMode.USB_SDR) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Spectrum only - an RTL-SDR dongle is receive-only, so VSWR/DTF/Cable Loss stay simulated.",
+                        fontSize = 11.sp,
+                        color = AnalyzerColors.TextSecondary,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = viewModel::connectUsbSdr) { Text("Connect USB SDR") }
+                    state.sourceStatusMessage?.let {
+                        Spacer(Modifier.height(4.dp))
+                        Text(it, fontSize = 11.sp, color = AnalyzerColors.Warn)
+                    }
                 }
             }
         },
@@ -306,7 +343,9 @@ private fun SettingsDialog(state: SpectrumUiState, viewModel: SpectrumViewModel,
                 centerText.toDoubleOrNull()?.let(viewModel::setCenterMhz)
                 spanText.toDoubleOrNull()?.let(viewModel::setSpanMhz)
                 refText.toDoubleOrNull()?.let(viewModel::setRefLevelDbm)
-                viewModel.applyDataSource(useHttp, baseUrl)
+                if (sourceMode != DataSourceMode.USB_SDR) {
+                    viewModel.applyDataSource(sourceMode, baseUrl)
+                }
                 onDismiss()
             }) { Text("Apply") }
         },

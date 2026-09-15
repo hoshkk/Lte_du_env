@@ -19,13 +19,39 @@
 1. **SimulatedRepeaterDataSource** (기본값) — 하드웨어 없이도 앱을 바로 사용해볼 수 있도록 노이즈
    플로어 + 가상 캐리어/반사 패턴을 실시간으로 생성합니다. **실측 데이터가 아닙니다.**
 2. **HttpRepeaterDataSource** — 중계기/기지국 장비가 노출하는 HTTP API를 폴링해 실제 TX/RX
-   스펙트럼·VSWR·DTF 값을 가져오는 뼈대(stub) 구현입니다. 앱 우측 상단 톱니바퀴(Settings)에서
-   "Use repeater HTTP API"를 켜고 Base URL을 입력하면 이 소스로 전환됩니다.
+   스펙트럼·VSWR·DTF 값을 가져오는 뼈대(stub) 구현입니다. Settings에서 데이터 소스를
+   "Repeater HTTP"로 바꾸고 Base URL을 입력하면 이 소스로 전환됩니다.
+3. **UsbSdrDataSource** — RTL2832U 기반 USB SDR 동글(RTL-SDR)을 USB OTG로 연결해 **실제
+   스펙트럼**을 잡습니다. Settings에서 "USB SDR"을 선택하고 **Connect USB SDR** 버튼을 누르면
+   동글을 찾아 USB 권한을 요청합니다. 수신 전용 동글이라 VSWR/DTF/Cable Loss는 이 모드에서도
+   시뮬레이션 데이터로 남습니다. 연동에 필요한 하드웨어와 배선(커플러 → 어댑터 → 동글 → 폰)은
+   아래 "USB SDR 연동" 절을 참고하세요.
 
 `HttpRepeaterDataSource`가 기대하는 JSON 스키마는 파일 상단 주석에 정리되어 있습니다. 실제 장비의
 API 문서를 받으면 요청 경로와 파싱 로직을 그 스펙에 맞게 조정하면 됩니다. VSWR/DTF는 실제로는
 방향성 커플러나 VNA 같은 RF 측정 하드웨어가 있어야 측정 가능한 값이므로, 폰 단독으로는 측정할 수
 없고 장비 쪽 API나 별도 하드웨어 연동이 필요합니다.
+
+## USB SDR 연동
+
+`app/src/main/java/com/virginiaprivacy/sdr/`에는 RTL2832U/R820T 튜너를 제어하는 코드가 들어있습니다.
+[Virginia Privacy Coalition의 `sdr` 프로젝트](https://github.com/virginiaprivacycoalition/sdr)에서
+가져온 것으로 **GPL-2.0 라이선스**이며, 자세한 출처·수정 내역·라이선스 영향은 그 디렉터리의
+`NOTICE.md`/`LICENSE.txt`를 참고하세요. USB 연결 자체(안드로이드 `UsbManager`/`UsbDeviceConnection`
+글루 코드, `RtlSdrUsbController.kt`)와 FFT(`Fft.kt`), 그리고 `UsbSdrDataSource.kt`는 이 프로젝트에서
+새로 작성한 코드입니다.
+
+**준비물**
+
+- RTL2832U 기반 SDR 동글 (R820T/R828D 튜너 권장 — 요즘 파는 RTL-SDR은 거의 다 이 계열)
+- USB-C to USB-A OTG 어댑터 (폰-동글 연결용)
+- 중계기/기지국의 커플러 모니터링 포트에서 동글 입력까지 연결할 RF 케이블 + 커넥터 변환 어댑터
+  (예: N-type to SMA)
+- 필요 시 RF 감쇠기(어테뉴에이터) — 소비자용 동글은 입력 파워 보호 회로가 약하므로 과전력 유입을
+  막기 위해 권장
+
+**하드웨어 없이도 안전한 이유**: 동글이 연결되지 않았거나 USB 권한이 없으면 이 소스는 그냥
+에러 메시지만 상태 표시줄에 띄우고, 시뮬레이션 모드는 평소대로 계속 동작합니다.
 
 ## 빌드
 
