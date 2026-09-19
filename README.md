@@ -1,124 +1,108 @@
-# Lte_du_env — Spectrum Check
+# SpectrumCheck RTL-SDR Blog V4 — v2.1.0
 
-휴대용 스펙트럼 분석기를 본떠 만든 안드로이드 앱입니다. **현재는 LTE 리버스(UL, 단말→기지국)
-스펙트럼만** 보는 용도로 범위를 좁혔습니다 — RTL-SDR(약 24MHz~1.7GHz)로 커버 가능한 주파수가
-그쪽뿐이라서, 다운링크(DL)·VSWR·DTF·Cable Loss는 전부 뺐습니다 (이유는 아래 참고).
+Android 8 이상 휴대폰 + RTL-SDR Blog V4 + 최신 SDR Driver 앱을 위한 RX 관측용 시험 앱입니다. 이전 간소화 과정에서 빠졌던 측정 설정을 복원했습니다. 실제 휴대폰 UI와 동글/RF는 아직 검증하지 않았습니다.
 
-## 기능
+**이번 v2.1.0 APK는 이전 v2.0.1과 서명이 다릅니다. 기존 SpectrumCheck를 제거한 뒤 설치하세요. 필요한 자료를 먼저 보관하고, SDR Driver는 그대로 두세요.**
 
-- **Spectrum**: KT LTE 밴드 프리셋(B3(30M/20M)/B8 — 업링크 주파수만) 선택, 마커 M1~M5, 피크 서치,
-  화면 탭으로 마커 배치, RBW/VBW 조절, Ref level offset으로 모니터 포트/케이블 손실 보정,
-  Channel Power(적분 파워 + PSD) 토글
-  - LTE B3(30M/20M)·B8 업링크 주파수는 KT MS2090A 계측기 교육자료(ROU UL 측정 절차)에서 확인한
-    실제 채널 값입니다. 다운링크 값은 코드 주석에만 남겨뒀습니다 (RTL-SDR로는 못 잡으므로).
-  - **RBW**: USB SDR 모드에서는 실제로 FFT 크기를 바꿔서 주파수 분해능에 반영됩니다 (좁게 잡을수록
-    정밀하지만 화면 갱신이 느려짐). Simulated 소스는 FFT를 직접 하지 않아 영향이 없습니다.
-  - **VBW**: RBW보다 좁게 주면 연속된 스윕 사이 지수이동평균(EMA)으로 트레이스를 스무딩합니다.
-    VBW ≥ RBW(기본값)면 스무딩 없이 매 스윕 그대로 표시됩니다.
+## 설치 및 연결
 
-**왜 DL/VSWR/DTF/Cable Loss가 없는지**: DL(다운링크)은 KT B3 기준 1840~1845MHz라 RTL-SDR
-한계(~1.7GHz)를 넘어가서 안 잡힙니다. VSWR/DTF/Cable Loss는 방향성 커플러나 VNA 같은 RF 측정
-하드웨어가 있어야 측정 가능한 값이라, 수신 전용 SDR 동글로는 애초에 측정할 수 없는 영역입니다
-(HackRF를 쓰더라도 마찬가지) — 예전엔 시뮬레이션 데이터로 화면만 보여줬지만, 실사용과 무관해서
-아예 뺐습니다.
+1. 제공한 APK를 설치하고 SDR Driver(`marto.rtl_tcp_andro`)를 설치/업데이트합니다. 이전 APK와 서명이 다르다는 설치 오류가 나오면 저장할 자료를 보관한 뒤 기존 SpectrumCheck를 제거하고 설치합니다. SDR Driver는 제거하지 않습니다.
+2. 측정 대역의 수동 안테나를 V4의 SMA 단자에 연결합니다. 동글 USB-A 플러그를 휴대폰 USB-C OTG → USB-A 암 어댑터에 연결합니다. OTG는 데이터와 USB 호스트를 지원해야 합니다.
+3. `측정 설정`에서 RX 중심주파수와 Span을 설정합니다. 최초 확인은 Span 1.5 MHz, 수동 이득 1/10, Offset 0, AGC OFF, VBW OFF로 시작할 수 있습니다.
+4. `실측 시작`을 누르고 드라이버 USB 권한을 허용합니다. 동글이 없을 때는 DEMO로 화면을 확인할 수 있지만 가상 신호입니다.
 
-## 데이터 소스
+드라이버: https://play.google.com/store/apps/details?id=marto.rtl_tcp_andro
+제조사 V4 안내: https://www.rtl-sdr.com/v4/
 
-앱은 `RepeaterDataSource` 인터페이스(`app/src/main/java/com/lteduenv/spectrum/data/RepeaterDataSource.kt`)
-뒤에서 두 가지 구현을 제공합니다.
+## 직접 입력하는 측정 설정
 
-1. **SimulatedRepeaterDataSource** (기본값) — 하드웨어 없이도 앱을 바로 사용해볼 수 있도록 노이즈
-   플로어(+ 가끔 나오는 간섭 스파이크)를 실시간으로 생성합니다. **실측 데이터가 아닙니다.**
-2. **UsbSdrDataSource** — USB SDR 동글을 USB OTG로 연결해 **실제 스펙트럼**을 잡습니다.
-   **RTL2832U(RTL-SDR)와 HackRF One을 둘 다 지원**하며, 어느 쪽을 꽂았는지 자동으로 인식합니다.
-   Settings에서 "USB SDR"을 선택하고 **Connect USB SDR** 버튼을 누르면 동글을 찾아 USB 권한을
-   요청합니다. 연동에 필요한 하드웨어와 배선(커플러 → 어댑터 → 동글 → 폰)은 아래 "USB SDR 연동"
-   절을 참고하세요.
+화면 상단 `측정 설정`을 열어 탭을 선택합니다. 숫자는 직접 입력하며 프리셋/빠른 선택 버튼은 보조 기능입니다. 설정을 열면 수신을 정지합니다. `적용` 후 실제 수신을 다시 시작하세요.
 
-## USB SDR 연동
+| 탭 | 항목 | 입력과 동작 |
+|---|---|---|
+| FREQ / SPAN | Center Frequency | MHz 단위 입력. 전체 관측 범위가 24–1766 MHz 이내여야 함 |
+| FREQ / SPAN | Span | 0.05–35 MHz. RBW에 비해 지나치게 좁으면 오류 안내 |
+| AMPLITUDE | Ref Level | -200–200. 그래프 상단 값이며 측정 레벨 자체는 변경하지 않음 |
+| AMPLITUDE | Ref Level Offset | -150–150 dB. 표시 레벨에 입력값을 더함 |
+| AMPLITUDE | Scale / Div | 1–20 dB/div. 세로 8칸 표시 |
+| AMPLITUDE | Auto Ref Level | 현재 피크에 맞춰 그래프 상단을 한 번 계산. 수신 이득 변경 아님 |
+| BANDWIDTH | RBW 목표 | 0.5–300 kHz. 실제 가능한 FFT 분해능 중 가까운 값으로 적용 |
+| BANDWIDTH | VBW | 0=OFF 또는 0.05–300 kHz. 연속 IQ 구간의 전력에 소프트웨어 평활 적용 |
+| MEASURE | Channel Power | 현재 트레이스의 대역 내 합산 전력 및 PSD(/MHz) 표시 |
+| MEASURE | Integration BW | 0.001–35 MHz. Channel Power를 사용하려면 Span 이내로 설정 |
+| GAIN | Auto Gain | 튜너 AGC ON/OFF. RTL 칩 디지털 AGC는 OFF 유지 |
+| GAIN | Manual Gain | 1–10단계. AGC ON이면 수동값 적용 안 함 |
+| GAIN | DC 제거 | 기본 OFF. ON이면 튜닝 중심의 실제 신호도 억제될 수 있음 |
 
-두 가지 동글을 지원하고, `UsbSdrDataSource`가 연결된 장치의 USB vendor/product ID를 보고 자동으로
-구분합니다.
+### Ref Level과 Offset의 구분
 
-### RTL-SDR (RTL2832U)
+- Ref Level을 0에서 -30으로 바꾸면 그래프 축만 이동합니다. 마커 레벨과 Channel Power는 그대로입니다.
+- 이 앱의 Offset 공식은 **표시값 = 원래 값 + Offset**입니다. 원래 -70에 +10을 넣으면 -60, -43을 넣으면 -113입니다. 양수·음수를 모두 입력할 수 있습니다.
+- Offset은 그래프·마커·Channel Power·CSV 표시값에 일관되게 적용됩니다. CSV에는 Offset을 빼기 전후의 값과 설정도 기록합니다.
+- 사용자가 보내준 계측기 교육 사진에는 -43 입력 예시가 있습니다. 사진의 계측기/측정 기준과 앱의 덧셈 규칙을 구분해야 하므로 그 값을 자동으로 적용하지 않습니다.
+- SDR의 원래 단위는 dBFS이며, Offset이 있으면 `상대 dB (Offset)`으로 표시합니다. Offset 하나만 넣어서 안테나 단자 기준의 정확한 dBm으로 교정되는 것은 아닙니다.
 
-`app/src/main/java/com/virginiaprivacy/sdr/`에는 RTL2832U/R820T 튜너를 제어하는 코드가 들어있습니다.
-[Virginia Privacy Coalition의 `sdr` 프로젝트](https://github.com/virginiaprivacycoalition/sdr)에서
-가져온 것으로 **GPL-2.0 라이선스**이며, 자세한 출처·수정 내역·라이선스 영향은 그 디렉터리의
-`NOTICE.md`/`LICENSE.txt`를 참고하세요. USB 연결 자체(안드로이드 `UsbManager`/`UsbDeviceConnection`
-글루 코드, `RtlSdrUsbController.kt`)는 이 프로젝트에서 새로 작성한 코드입니다.
+### RBW / VBW
 
-- 주파수 범위: 대략 24MHz~1.7GHz (칩/모델에 따라 편차 있음)
-- 표시 대역폭: 한 번에 약 2.4MHz (샘플레이트 고정값)
-- **Auto gain / Manual gain**: Settings에 R820T/R828D 튜너의 게인을 제어하는 토글이 있습니다.
-  Auto는 튜너 칩 자체의 AGC(LNA+Mixer 자동 게인)를 씁니다. Off로 끄면 1~10 슬라이더로 수동
-  게인을 고정할 수 있습니다 — 실제 SK/KT 계측기 화면처럼 Attenuator/Preamp/AGC가 물리적으로
-  분리된 스테이지는 아니고, RTL-SDR은 게인 축이 하나뿐이라 이 슬라이더 하나가 두 역할을 겸합니다:
-  낮은 값은 강한 신호 옆에서 클리핑을 막는 Attenuator처럼, 높은 값은 약한 신호를 더 잘 잡는
-  Preamp처럼 동작합니다.
+- 샘플레이트는 2.4 MS/s입니다. RBW 목표에 따라 FFT 크기 16–8192를 선택합니다. Hann 창의 3 dB 폭을 실제 RBW로 계산해 표시하고, ENBW(등가 잡음 대역폭)도 별도로 표시합니다.
+- 예를 들어 RBW 100 kHz를 입력할 수 있지만, 선택되는 FFT 크기에서 실제 RBW는 100 kHz와 다를 수 있습니다. 설정창과 측정 화면의 **적용 RBW**를 확인하세요. 입력 숫자를 그대로 실제 성능인 것처럼 표시하지 않습니다.
+- VBW는 연속 FFT 구간의 **선형 전력**에 1차 저역통과 평활을 적용합니다. 입력한 목표 대역폭과 IQ 시간 간격으로 계수를 계산합니다. 구간당 약 5개 시정수를 확보하되 연속 구간 길이는 제한됩니다. 짧은 피크가 낮아질 수 있습니다.
+- 계측기에서 설정한 RBW 100 kHz / VBW 1 kHz와 이 앱의 같은 입력 숫자가 동일한 필터 특성·정확도·스윕 성능을 의미하지 않습니다.
+- 사진의 Points 30001을 숫자만 맞춰 넣지 않았습니다. 앱의 Points는 실제 Span·FFT로 결정된 측정점 수이며 화면 아래에 표시합니다.
 
-  참고로 이 기능을 만들면서 vendored 드라이버(`com.virginiaprivacy.sdr`)의 게인 인덱스 계산식에
-  나눗셈/곱셈 순서가 뒤바뀐 버그가 있는 걸 발견해서 같이 고쳤습니다 — 자세한 내용은
-  `app/src/main/java/com/virginiaprivacy/sdr/NOTICE.md` 참고.
+### 마커, Peak, Max Hold, Channel Power
 
-### HackRF One
+- M1–M5 중 선택하고 그래프를 터치하면 해당 마커가 이동합니다.
+- Peak는 현재 표시 트레이스의 가장 높은 점으로 선택한 마커를 이동합니다. Clear는 선택한 마커를 지웁니다.
+- Max Hold는 각 주파수의 최대값과 갱신 시각을 보관합니다. 장소를 바꿔 비교할 때는 피크 초기화를 사용하세요. GPS 위치는 기록하지 않습니다.
+- Ch Power 버튼으로 결과 표시를 켜고 끕니다. 결과는 **현재 트레이스**를 사용하며 서로 다른 시점의 피크를 모은 Max Hold를 합산하지 않습니다.
+- Channel Power는 선형 전력으로 합산하고 Hann ENBW를 반영합니다. Integration BW 전체를 관측하지 못하면 부분 대역을 전체인 것처럼 계산하지 않습니다.
+- 넓은 대역의 합산 결과는 시간차가 있는 **순차 스윕 합산**입니다. 동시 대역 전력이나 정밀 계측기 dBm 판정값으로 사용하지 마세요.
+- 사진의 1 MHz 값에 약 13 dB를 더해 20 MHz로 환산하는 방식은 평탄한 잡음 밀도를 가정합니다. 협대역 간섭이나 특정 구간 피크가 있으면 성립하지 않을 수 있어 자동 환산을 넣지 않았습니다.
 
-`HackRfController.kt`는 [Great Scott Gadgets의 공식 오픈소스 호스트 드라이버
-`libhackrf`](https://github.com/greatscottgadgets/hackrf)
-(`host/libhackrf/src/hackrf.c`/`.h`, BSD 계열 라이선스)에서 실제 USB 벤더 리퀘스트 번호·페이로드
-포맷을 확인한 뒤 안드로이드 `UsbManager`/`UsbDeviceConnection`로 직접 새로 작성한 코드입니다 (HackRF
-프로토콜은 제어 전송 몇 개로 충분히 단순해서, RTL-SDR 때와 달리 외부 코드를 그대로 가져다 쓸 필요는
-없었습니다).
+## RX 프리셋
 
-- 주파수 범위: 1MHz~6GHz (LTE 전대역 + 5G n78 포함)
-- 표시 대역폭: 한 번에 8MHz (샘플레이트 고정값, `HackRfController.SAMPLE_RATE_HZ`)
-- LNA/VGA 게인은 코드에 고정값(24dB/20dB)으로 넣어뒀습니다 — 실제 하드웨어로 테스트하면서 신호가
-  너무 세거나 약하면 이 값을 조정해야 할 수 있습니다
-- **Preamp**: HackRF의 전단 브로드밴드 AMP(약 +14dB)를 Settings에서 켜고 끌 수 있습니다 — 계측기의
-  "Preamp" 토글과 같은 개념으로, 약한 신호 감도를 높이는 대신 근처에 강한 신호가 있으면 클리핑될 수
-  있습니다. RTL-SDR에는 이 토글이 영향을 주지 않습니다 (대신 위 Auto/Manual gain을 쓰세요).
-- 송신(TX) 기능은 없습니다. HackRF One 하드웨어 자체는 송수신 겸용이지만, 이 앱은 수신(RX)만
-  구현했습니다 — 무선국 수검처럼 장비에 케이블로 물려 공인 계측을 하는 용도는 애초에 HackRF
-  같은 비교정 소비자용 SDR로는 커버할 수 없는 영역이라 필요하지 않다고 판단했습니다.
+| 프리셋 | Center | Span | Integration BW |
+|---|---:|---:|---:|
+| B8 RX | 909.3 MHz | 15 MHz | 10 MHz |
+| B3 RX 20M | 1745 MHz | 25 MHz | 20 MHz |
+| B3 RX 30M | 1750 MHz | 30 MHz | 30 MHz |
 
-### 공통 준비물
+프리셋은 전달받은 소스 및 참고 자료에 기반하며 현장 할당 주파수를 다시 확인하세요. B3 30M의 사진상 Span 35 MHz는 상단 1767.5 MHz까지 필요하므로 이 앱에서는 V4 상한을 고려해 30 MHz를 사용합니다. B3 상단의 튜닝과 감도는 실물에서 확인해야 합니다. 사진에 있는 1740–1745 MHz 미사용 표기를 앱의 전국 공통 제외 대역으로 적용하지 않았습니다.
 
-- SDR 동글 (RTL-SDR 또는 HackRF One 중 하나)
-- USB(폰) ↔ 동글 단자에 맞는 OTG 케이블 (동글마다 USB-A/USB-B/Micro-USB 등 다름)
-- 중계기/기지국의 커플러 모니터링 포트에서 동글 입력까지 연결할 RF 케이블 + 커넥터 변환 어댑터
-  (예: N-type to SMA)
-- 필요 시 RF 감쇠기(어테뉴에이터) — 소비자용 동글은 입력 파워 보호 회로가 약하므로 과전력 유입을
-  막기 위해 권장
+## 준비물과 현장 사용
 
-**하드웨어 없이도 안전한 이유**: 동글이 연결되지 않았거나 USB 권한이 없으면 이 소스는 그냥
-에러 메시지만 상태 표시줄에 띄우고, 시뮬레이션 모드는 평소대로 계속 동작합니다.
+- 기본: 구입한 V4, USB-C OTG 어댑터, 실제 RX 대역용 50Ω 수동 안테나. 동글 쪽 SMA 수와 RP-SMA를 구분하세요.
+- 연결이 끊기는 경우: USB 전원·호스트 지원과 케이블을 확인합니다. 필요 시 폰과 호환되는 전원 공급 허브를 검토합니다.
+- 강한 RF 환경: 이득을 낮추고 필요하면 대역통과필터/감쇠기를 사용합니다. LNA부터 추가하면 과부하가 더 심해질 수 있습니다.
+- **TX 출력 또는 용도 불명 포트에 직접 연결하지 마세요.** RX MON/테스트 포트도 RF 레벨, 결합도, DC 유무를 확인한 뒤 감쇠기/DC block을 선정해야 합니다.
+- Bias Tee를 켜는 명령은 보내지 않지만 드라이버가 EEPROM 강제 ON 설정을 따를 수 있습니다. 설정 변경/중고 제품은 이를 확인하세요.
+- 공간별 비교는 같은 중심주파수·Span·RBW·VBW·안테나 방향·수동 이득에서 수행하세요. AGC ON은 이득이 자동 변해 레벨 비교를 어렵게 합니다.
+- 입력 끝값 비율로 클리핑을 알립니다. 경고가 없다고 튜너 과부하/상호변조가 없다는 뜻은 아닙니다.
+- 이 구성은 RX 의심 신호 탐색용입니다. PIM 합격/불합격, 불요파 규격 적합성, 절대 dBm을 확정하지 않습니다. LTE 2.1 GHz 대역의 RX나 5G 3.5 GHz는 대상이 아닙니다.
 
-**검증 범위**: 이 환경에는 실제 RTL-SDR/HackRF 하드웨어가 없어서, 두 드라이버 모두 실제 장치로
-동작을 검증하지 못했습니다. USB 프로토콜은 각 프로젝트의 실제 오픈소스를 읽고 맞춘 것이지만,
-실기 연결 시 문제가 있으면 로그/증상을 알려주시면 바로 고칠 수 있습니다.
+## 데이터와 제약
 
-## 빌드
+- 약 1.8 MHz를 넘는 Span은 재튜닝하면서 순차 스윕합니다. 각 재튜닝마다 최소 650 ms를 기다리므로 넓은 대역은 수 초 이상 걸리고 짧은 간섭을 놓칠 수 있습니다.
+- rtl_tcp에 튜닝 완료 ACK/하드웨어 샘플 시각표가 없습니다. 버퍼를 계속 소모한 뒤 정착 시간을 두는 방식이며 실물 확인이 필요합니다.
+- CSV는 화면에 표시한 트레이스, Offset 전후 값, 설정, 마커, 관측 갱신 시각을 저장합니다. 연속 로그 기능은 아닙니다.
+- 앱이 배경으로 가거나 저장 창을 열면 수신을 정지하고 마지막 프레임을 유지합니다. 돌아온 뒤 실측 시작을 다시 누르세요.
+- Ref Level/Offset만 바꾸는 경우 마지막 프레임으로 표시를 다시 계산합니다. 수신 조건을 바꾸면 기존 트레이스를 지워 서로 다른 조건이 섞이지 않게 합니다.
 
-### GitHub Actions로 APK 받기 (로컬에 Android Studio가 없어도 가능)
+## 빌드와 검증
 
-이 저장소에는 `.github/workflows/build-apk.yml`이 포함되어 있어 push할 때마다 자동으로 디버그
-APK를 빌드합니다. GitHub 저장소의 **Actions** 탭 → 해당 워크플로 실행 → **Artifacts** 에서
-`spectrum-check-debug-apk`를 내려받으면 됩니다.
+JDK 17 / Android SDK 34 / Gradle wrapper:
 
-### 로컬 빌드
-
-Android Studio (또는 Android SDK + JDK 17)가 설치되어 있다면:
-
-```bash
-./gradlew assembleDebug
+```sh
+./gradlew testDebugUnitTest assembleDebug
 ```
 
-생성된 APK는 `app/build/outputs/apk/debug/app-debug.apk` 에 위치합니다.
+Windows PowerShell에서는 `./gradlew.bat testDebugUnitTest assembleDebug`를 사용합니다. 출력은 `app/build/outputs/apk/debug/app-debug.apk`입니다. 검증 범위와 결과는 `VALIDATION.md`를 참고하세요.
 
-## 참고
 
-- 현장에서 사용할 주파수 밴드 목록 (현재 프리셋 외 추가/수정 필요 시 `Models.kt`의
-  `BandPresets.all` 수정)
-- 나중에 더 넓은 대역(HackRF 등)으로 다운링크까지 보고 싶어지면, `BandPreset`에 다운링크
-  주파수를 다시 넣고 `SweepConfig`에 방향 전환을 되살리면 됩니다 (커밋 히스토리에 이전 구현이
-  남아있습니다).
+## v2.2.0 추가
+장비 RX 점검 / 불요파 탐색 빠른 설정과 모드별 사용자 설정 저장. FIELD-PROFILES.md를 참고하세요.
+
+
+## v2.2.1 화면 정리
+버튼 이름을 장비 리버스 / 불요파로 변경. 최근 적용 및 설정 적용 안내 제거. 모드 아래 설정값을 바로 표시하고 연결/측정 상태는 그래프 아래에 표시. 저장 키 유지로 기존 프리셋 호환.

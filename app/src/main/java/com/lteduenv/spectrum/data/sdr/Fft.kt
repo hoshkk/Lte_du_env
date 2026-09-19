@@ -14,23 +14,30 @@ object Fft {
      * index 0 is the most negative frequency and the last index is the most positive - i.e.
      * ready to plot left-to-right across the captured span.
      */
-    fun magnitudeSpectrumDb(iqInterleaved: FloatArray, size: Int): FloatArray {
-        require(size and (size - 1) == 0) { "size must be a power of two" }
+    fun magnitudeSpectrumDb(iqInterleaved: FloatArray, size: Int, removeDc: Boolean = false): FloatArray {
+        require(size >= 2 && size and (size - 1) == 0) { "size must be a power of two" }
         val re = FloatArray(size)
         val im = FloatArray(size)
-        val pairs = minOf(size, iqInterleaved.size / 2)
+        require(iqInterleaved.size == size * 2) { "Incomplete IQ frame" }
+        val pairs = size
+        var mi=0.0; var mq=0.0; var windowSum=0.0
+        if(removeDc) {
+            for(i in 0 until size) { mi+=iqInterleaved[2*i]; mq+=iqInterleaved[2*i+1] }
+            mi/=size; mq/=size
+        }
         for (i in 0 until pairs) {
             // Hann window to reduce spectral leakage.
             val w = (0.5 - 0.5 * cos(2.0 * PI * i / (size - 1))).toFloat()
-            re[i] = iqInterleaved[2 * i] * w
-            im[i] = iqInterleaved[2 * i + 1] * w
+            windowSum+=w
+            re[i] = ((iqInterleaved[2*i]-mi)*w).toFloat()
+            im[i] = ((iqInterleaved[2*i+1]-mq)*w).toFloat()
         }
         fftInPlace(re, im)
         val shifted = FloatArray(size)
         for (k in 0 until size) {
             val srcIndex = (k + size / 2) % size
             val power = re[srcIndex] * re[srcIndex] + im[srcIndex] * im[srcIndex]
-            shifted[k] = 10f * log10((power / size + 1e-12).toDouble()).toFloat()
+            shifted[k] = 10f * log10((power / (windowSum * windowSum) + 1e-15).toDouble()).toFloat()
         }
         return shifted
     }

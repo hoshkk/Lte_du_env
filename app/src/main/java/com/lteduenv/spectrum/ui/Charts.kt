@@ -80,15 +80,15 @@ private fun gridPath(sizeWidth: Float, sizeHeight: Float): Pair<List<Float>, Lis
 @Composable
 fun SpectrumTraceCanvas(
     frame: SpectrumFrame?,
-    refLevelDbm: Double,
+    refLevelDb: Double,
     markers: List<Marker>,
     selectedMarker: Int,
     modifier: Modifier = Modifier,
     dbSpan: Double = 100.0,
     onTapFrequency: (Double) -> Unit = {},
 ) {
-    val yLabels = remember(refLevelDbm, dbSpan) {
-        (0..GRID_ROWS).map { row -> "%.1f".format(refLevelDbm - row * (dbSpan / GRID_ROWS)) }
+    val yLabels = remember(refLevelDb, dbSpan) {
+        (0..GRID_ROWS).map { row -> "%.1f".format(refLevelDb - row * (dbSpan / GRID_ROWS)) }
     }
     val xLabels = remember(frame?.startMhz, frame?.stopMhz) {
         val start = frame?.startMhz ?: 0.0
@@ -114,11 +114,16 @@ fun SpectrumTraceCanvas(
             if (f != null && f.pointCount > 1) {
                 val path = Path()
                 val n = f.pointCount
-                for (i in 0 until n) {
-                    val x = i / (n - 1).toFloat() * size.width
-                    val level = f.levelsDbm[i].toDouble()
-                    val y = ((refLevelDbm - level) / dbSpan).toFloat().coerceIn(0f, 1f) * size.height
-                    if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                // Preserve narrow peaks when many FFT bins map to the same screen pixel.
+                val columns=kotlin.math.min(n,size.width.toInt().coerceAtLeast(1))
+                for(column in 0 until columns) {
+                    val first=column*n/columns
+                    val end=((column+1)*n/columns).coerceAtLeast(first+1)
+                    var peak=Float.NEGATIVE_INFINITY
+                    for(i in first until end)peak=kotlin.math.max(peak,f.levelsDb[i])
+                    val x=column/(columns-1).coerceAtLeast(1).toFloat()*size.width
+                    val y=((refLevelDb-peak)/dbSpan).toFloat().coerceIn(0f,1f)*size.height
+                    if(column==0)path.moveTo(x,y)else path.lineTo(x,y)
                 }
                 drawPath(path, AnalyzerColors.Trace, style = Stroke(width = 2.5f))
             }
@@ -128,10 +133,10 @@ fun SpectrumTraceCanvas(
                     textSize = 26f
                     isAntiAlias = true
                 }
-                markers.filter { it.enabled }.forEach { m ->
+                markers.filter { it.enabled && it.levelDb.isFinite() && it.freqMhz in f.startMhz..f.stopMhz }.forEach { m ->
                     val ratio = (((m.freqMhz - f.startMhz) / (f.stopMhz - f.startMhz)).coerceIn(0.0, 1.0)).toFloat()
                     val x = ratio * size.width
-                    val y = (((refLevelDbm - m.levelDbm) / dbSpan).coerceIn(0.0, 1.0)).toFloat() * size.height
+                    val y = (((refLevelDb - m.levelDb) / dbSpan).coerceIn(0.0, 1.0)).toFloat() * size.height
                     val markerColor = if (m.index == selectedMarker) AnalyzerColors.Bad else AnalyzerColors.AccentBlue
                     drawCircle(markerColor, radius = 5f, center = androidx.compose.ui.geometry.Offset(x, y))
                     drawLine(markerColor, androidx.compose.ui.geometry.Offset(x, y), androidx.compose.ui.geometry.Offset(x, size.height), 1f)
