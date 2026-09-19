@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Optional: used only to sort equipment matches by distance from the engineer's current position. -->
+    <!-- Used to sort equipment matches by distance from the engineer's current position, and (Q+)
+         required alongside READ_PHONE_STATE to read live cell info (PCI/RSRP/...). -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Used to read the device's live serving-cell info (PCI/RSRP/RSRQ/SINR/band) and, best-effort,
+         IMEI/phone number. IMEI in particular is blocked for regular apps on Android 10+ regardless
+         of this permission - see LiveCellInfoProvider. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
     <application
         android:allowBackup="true"

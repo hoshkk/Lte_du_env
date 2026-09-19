@@ -1,6 +1,5 @@
 package com.lteduenv.ktdebug.ui
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -84,15 +83,14 @@ private fun BandRow(
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Checkbox(checked = key in selectedForCompare, onCheckedChange = { onToggleSelect(key) })
-                Column {
-                    Text("${band.displayName} (${band.frequencyLabel})")
-                    Text("${band.duplexMode} · ${if (band.networkType == NetworkType.NR) "NR" else "LTE"}")
-                }
+            Checkbox(checked = key in selectedForCompare, onCheckedChange = { onToggleSelect(key) })
+            // weight(1f) lets this text shrink/wrap instead of squeezing the button out of view
+            // when the label is long (e.g. the two Band 3 bandwidth variants).
+            Column(modifier = Modifier.weight(1f).padding(horizontal = 4.dp)) {
+                Text(band.displayName)
+                Text("${band.frequencyLabel} · ${band.duplexMode} · ${if (band.networkType == NetworkType.NR) "NR" else "LTE"}")
             }
             OutlinedButton(onClick = { onOpenDebug(key) }) {
                 Text("상세보기")

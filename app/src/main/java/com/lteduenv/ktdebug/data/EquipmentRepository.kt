@@ -61,15 +61,6 @@ class EquipmentRepository(context: Context) {
         withDistance.sortedWith(compareBy(nullsLast<Double>()) { it.distanceMeters })
     }
 
-    /** Picks a random real PCI from the bundled dataset for the given network type, used to seed mock signal data. */
-    suspend fun randomKnownPci(networkType: NetworkType): Int? {
-        val cache = when (networkType) {
-            NetworkType.LTE -> lteCache()
-            NetworkType.NR -> nrCache()
-        }
-        return cache.pciIndex.keys.randomOrNull()
-    }
-
     /** Real sites/repeaters within [radiusMeters] of [location], nearest first. */
     suspend fun nearby(
         location: Location,

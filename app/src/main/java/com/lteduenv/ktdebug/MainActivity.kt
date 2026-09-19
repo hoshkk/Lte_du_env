@@ -9,7 +9,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.lteduenv.ktdebug.data.EquipmentRepository
-import com.lteduenv.ktdebug.data.MockDebugDataGenerator
 import com.lteduenv.ktdebug.ui.BandKey
 import com.lteduenv.ktdebug.ui.BandListScreen
 import com.lteduenv.ktdebug.ui.CompareScreen
@@ -23,11 +22,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         val equipmentRepository = EquipmentRepository(applicationContext)
-        val generator = MockDebugDataGenerator(equipmentRepository)
 
         setContent {
             KtDebugViewerTheme {
-                KtDebugApp(equipmentRepository, generator)
+                KtDebugApp(equipmentRepository)
             }
         }
     }
@@ -35,8 +33,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun KtDebugApp(
-    equipmentRepository: EquipmentRepository,
-    generator: MockDebugDataGenerator
+    equipmentRepository: EquipmentRepository
 ) {
     var screen by remember { mutableStateOf<Screen>(Screen.BandList) }
     var selectedForCompare by remember { mutableStateOf(setOf<BandKey>()) }
@@ -59,14 +56,12 @@ private fun KtDebugApp(
         is Screen.Debug -> DebugScreen(
             bandKey = current.bandKey,
             equipmentRepository = equipmentRepository,
-            generator = generator,
             onBack = { screen = Screen.BandList }
         )
 
         is Screen.Compare -> CompareScreen(
             bandKeys = current.bandKeys,
             equipmentRepository = equipmentRepository,
-            generator = generator,
             onBack = { screen = Screen.BandList }
         )
 
