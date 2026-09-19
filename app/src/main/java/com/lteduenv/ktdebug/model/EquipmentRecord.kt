@@ -56,3 +56,8 @@ data class EquipmentMatch(
     val matchedPci: Int,
     val distanceMeters: Double? = null
 )
+
+data class NearbyResult(
+    val record: EquipmentRecord,
+    val distanceMeters: Double
+)

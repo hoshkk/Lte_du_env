@@ -28,7 +28,8 @@ fun BandListScreen(
     selectedForCompare: Set<BandKey>,
     onToggleSelect: (BandKey) -> Unit,
     onOpenDebug: (BandKey) -> Unit,
-    onCompare: () -> Unit
+    onCompare: () -> Unit,
+    onOpenNearby: () -> Unit
 ) {
     Scaffold(
         topBar = { TopAppBar(title = { Text("KT Debug Viewer - 밴드 선택") }) }
@@ -52,6 +53,12 @@ fun BandListScreen(
                     ) {
                         Text("선택한 ${selectedForCompare.size}개 밴드 비교하기")
                     }
+                    OutlinedButton(
+                        onClick = onOpenNearby,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                    ) {
+                        Text("GPS로 내 주변 PCI/장비 보기")
+                    }
                 }
             }
         }
@@ -73,7 +80,7 @@ private fun BandRow(
     onToggleSelect: (BandKey) -> Unit,
     onOpenDebug: (BandKey) -> Unit
 ) {
-    val key = BandKey(band.networkType, band.band)
+    val key = BandKey(band.networkType, band.band, band.bandwidthMHz)
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(8.dp),

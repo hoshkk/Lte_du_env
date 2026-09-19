@@ -60,7 +60,7 @@ class MockDebugDataGenerator(private val equipmentRepository: EquipmentRepositor
         val cqi = random.nextInt(3, 16)
         return LteCellInfo(
             band = band.band,
-            bandwidthMHz = band.bandwidthOptionsMHz.random(random),
+            bandwidthMHz = band.bandwidthMHz,
             enDcSupport = "Support",
             earfcn = band.earfcnRange.random(random),
             pci = pci,
@@ -94,7 +94,7 @@ class MockDebugDataGenerator(private val equipmentRepository: EquipmentRepositor
         return NrCellInfo(
             mode = "NSA",
             band = band.band,
-            bandwidthMHz = band.bandwidthOptionsMHz.random(random),
+            bandwidthMHz = band.bandwidthMHz,
             scgState = scgState,
             nrArfcn = band.earfcnRange.random(random),
             pci = pci,

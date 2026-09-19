@@ -53,7 +53,7 @@ fun CompareScreen(
     val rowsState = produceState(initialValue = emptyList<CompareRow>(), bandKeys) {
         val result = mutableListOf<CompareRow>()
         for (key in bandKeys) {
-            val band = KtBandCatalog.find(key.networkType, key.band) ?: continue
+            val band = KtBandCatalog.find(key.networkType, key.band, key.bandwidthMHz) ?: continue
             val snapshot: DebugSnapshot = generator.generate(band)
             result += if (key.networkType == NetworkType.NR && snapshot.nr != null) {
                 val nr = snapshot.nr

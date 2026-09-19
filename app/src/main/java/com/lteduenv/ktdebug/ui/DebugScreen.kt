@@ -41,7 +41,7 @@ fun DebugScreen(
     generator: MockDebugDataGenerator,
     onBack: () -> Unit
 ) {
-    val band = remember(bandKey) { KtBandCatalog.find(bandKey.networkType, bandKey.band) }
+    val band = remember(bandKey) { KtBandCatalog.find(bandKey.networkType, bandKey.band, bandKey.bandwidthMHz) }
     var refreshCounter by remember { mutableIntStateOf(0) }
     var snapshot by remember(bandKey) { mutableStateOf<DebugSnapshot?>(null) }
     var lteMatches by remember(bandKey) { mutableStateOf<List<EquipmentMatch>>(emptyList()) }

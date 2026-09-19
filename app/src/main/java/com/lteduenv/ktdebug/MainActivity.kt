@@ -14,6 +14,7 @@ import com.lteduenv.ktdebug.ui.BandKey
 import com.lteduenv.ktdebug.ui.BandListScreen
 import com.lteduenv.ktdebug.ui.CompareScreen
 import com.lteduenv.ktdebug.ui.DebugScreen
+import com.lteduenv.ktdebug.ui.NearbyScreen
 import com.lteduenv.ktdebug.ui.Screen
 import com.lteduenv.ktdebug.ui.theme.KtDebugViewerTheme
 
@@ -51,7 +52,8 @@ private fun KtDebugApp(
                 }
             },
             onOpenDebug = { key -> screen = Screen.Debug(key) },
-            onCompare = { screen = Screen.Compare(selectedForCompare.toList()) }
+            onCompare = { screen = Screen.Compare(selectedForCompare.toList()) },
+            onOpenNearby = { screen = Screen.Nearby }
         )
 
         is Screen.Debug -> DebugScreen(
@@ -65,6 +67,11 @@ private fun KtDebugApp(
             bandKeys = current.bandKeys,
             equipmentRepository = equipmentRepository,
             generator = generator,
+            onBack = { screen = Screen.BandList }
+        )
+
+        is Screen.Nearby -> NearbyScreen(
+            equipmentRepository = equipmentRepository,
             onBack = { screen = Screen.BandList }
         )
     }
