@@ -95,8 +95,8 @@ fun DebugScreen(
 
             val lte = current.lte
             FieldRow(
-                listOf("Band/BW", "EN-DC", "EARFCN"),
-                listOf("${lte.band}/${lte.bandwidthMHz}MHz", lte.enDcSupport, "${lte.earfcn}")
+                listOf("Band/BW", "EN-DC", "EARFCN", "PCI"),
+                listOf("${lte.band}/${lte.bandwidthMHz}MHz", lte.enDcSupport, "${lte.earfcn}", "${lte.pci}")
             )
             FieldRow(
                 listOf("RSRP", "RSRQ", "RSSI/SINR", "RPLMN/TAC"),
@@ -128,8 +128,8 @@ fun DebugScreen(
             } else {
                 LabelValueLine("NR_Mode", nr.mode)
                 FieldRow(
-                    listOf("Band/BW SCG", "NR-ARFCN", "gNB-Cell(PCI)"),
-                    listOf("${nr.band}/${nr.bandwidthMHz} ${nr.scgState}", "${nr.nrArfcn}", "-(${nr.pci})")
+                    listOf("Band/BW SCG", "NR-ARFCN", "PCI"),
+                    listOf("${nr.band}/${nr.bandwidthMHz} ${nr.scgState}", "${nr.nrArfcn}", "${nr.pci}")
                 )
                 FieldRow(
                     listOf("RSRP", "RSRQ", "SSB-SINR", "CQI/RI"),

@@ -36,8 +36,9 @@ private data class CompareRow(
     val networkType: NetworkType,
     val pci: Int,
     val rsrp: Int?,
-    val rsrq: Int?,
     val sinr: Double?,
+    val txPwr: Int?,
+    val rsrq: Int?,
     val equipmentName: String
 )
 
@@ -62,8 +63,9 @@ fun CompareScreen(
                     networkType = NetworkType.NR,
                     pci = nr.pci,
                     rsrp = nr.rsrpDbm,
-                    rsrq = nr.rsrqDb,
                     sinr = nr.ssbSinrDb,
+                    txPwr = nr.nrTxPwrDbm,
+                    rsrq = nr.rsrqDb,
                     equipmentName = matches.firstOrNull()?.record?.name ?: "미확인"
                 )
             } else {
@@ -74,8 +76,9 @@ fun CompareScreen(
                     networkType = NetworkType.LTE,
                     pci = lte.pci,
                     rsrp = lte.rsrpDbm,
-                    rsrq = lte.rsrqDb,
                     sinr = lte.sinrDb,
+                    txPwr = lte.txPwrDbm,
+                    rsrq = lte.rsrqDb,
                     equipmentName = matches.firstOrNull()?.record?.name ?: "미확인"
                 )
             }
@@ -113,10 +116,11 @@ fun CompareScreen(
 
 private val columnWidth = 96.dp
 
+// Band/PCI/RSRP/SINR/TxPwr are the required columns; RSRQ and 장비명 are shown after them for extra context.
 @Composable
 private fun CompareHeaderRow() {
     Row(Modifier.padding(vertical = 6.dp)) {
-        listOf("밴드", "PCI", "RSRP", "RSRQ", "SINR", "장비명").forEach {
+        listOf("밴드", "PCI", "RSRP", "SINR", "TxPwr", "RSRQ", "장비명").forEach {
             Text(
                 text = it,
                 fontFamily = FontFamily.Monospace,
@@ -133,8 +137,9 @@ private fun CompareDataRow(row: CompareRow) {
         Text(row.bandLabel, fontFamily = FontFamily.Monospace, modifier = Modifier.width(columnWidth))
         Text("${row.pci}", fontFamily = FontFamily.Monospace, modifier = Modifier.width(columnWidth))
         Text(row.rsrp?.toString() ?: "-", fontFamily = FontFamily.Monospace, modifier = Modifier.width(columnWidth))
-        Text(row.rsrq?.toString() ?: "-", fontFamily = FontFamily.Monospace, modifier = Modifier.width(columnWidth))
         Text(row.sinr?.toString() ?: "-", fontFamily = FontFamily.Monospace, modifier = Modifier.width(columnWidth))
+        Text(row.txPwr?.toString() ?: "-", fontFamily = FontFamily.Monospace, modifier = Modifier.width(columnWidth))
+        Text(row.rsrq?.toString() ?: "-", fontFamily = FontFamily.Monospace, modifier = Modifier.width(columnWidth))
         Text(row.equipmentName, fontFamily = FontFamily.Monospace, modifier = Modifier.width(columnWidth * 2))
     }
     HorizontalDivider()
