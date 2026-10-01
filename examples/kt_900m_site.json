@@ -1,0 +1,28 @@
+{
+  "_comment": "시뮬레이터 시나리오 예시: 900MHz 대역 10MHz LTE 캐리어 + 고조파/스퓨리어스/간섭원. power_db 는 총 전력(dBFS), bw_hz 0 은 CW.",
+  "noise_density_db": -125,
+  "dc_spike_db": -45,
+  "seed": 7,
+  "signals": [
+    {
+      "freq_hz": 940000000.0,
+      "power_db": -18,
+      "bw_hz": 9000000.0
+    },
+    {
+      "freq_hz": 946500000.0,
+      "power_db": -60,
+      "bw_hz": 1000000.0
+    },
+    {
+      "freq_hz": 921600000.0,
+      "power_db": -58,
+      "bw_hz": 0
+    },
+    {
+      "freq_hz": 955000000.0,
+      "power_db": -70,
+      "bw_hz": 0
+    }
+  ]
+}
