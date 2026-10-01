@@ -28,6 +28,8 @@ object SweepMath {
         require(listOf(c.centerMhz,c.spanMhz,c.refLevelDb,c.refLevelOffsetDb,c.rbwKhz,c.vbwKhz,c.integrationBwMhz,c.dbPerDiv).all{it.isFinite()}){"숫자 입력을 확인하세요"}
         require(c.spanMhz in 0.05..35.0){"Span 범위: 0.05–35 MHz"}
         require(c.centerMhz-c.spanMhz/2>=24.0 && c.centerMhz+c.spanMhz/2<=1766.0){"관측 범위 전체가 24–1766 MHz 안이어야 합니다"}
+        require(c.nativeSettleMs in 5..1000){"USB 직접 대기 범위: 5–1000 ms"}
+        require(c.tuneSettleMs in 40..1000){"스윕 대기 범위: 40–1000 ms"}
         require(c.manualGainLevel in 1..10){"수동 이득 단계는 1–10"}
         require(c.refLevelDb in -200.0..200.0){"Ref Level 범위: -200–200 dB"}
         require(c.refLevelOffsetDb in -150.0..150.0){"Offset 범위: -150–150 dB"}
@@ -57,7 +59,7 @@ object SweepMath {
     fun hold(previous:SpectrumFrame?,current:SpectrumFrame):SpectrumFrame {
         if(previous==null || !compatible(previous,current))return current.copy(levelsDb=current.levelsDb.copyOf(),observedAtMs=current.observedAtMs.copyOf())
         val levels=current.levelsDb.copyOf();val times=current.observedAtMs.copyOf()
-        for(i in levels.indices) if(previous.levelsDb[i]>levels[i]) { levels[i]=previous.levelsDb[i];times[i]=previous.observedAtMs[i] }
+        for(i in levels.indices) if(previous.levelsDb[i].isFinite() && (!levels[i].isFinite() || previous.levelsDb[i]>levels[i])) { levels[i]=previous.levelsDb[i];times[i]=previous.observedAtMs[i] }
         return current.copy(levelsDb=levels,observedAtMs=times)
     }
 }
@@ -67,9 +69,9 @@ class IqAssembler(val size:Int=2048) {
     private var offset=0
     private var result:FloatArray?=null
     fun reset(){offset=0;result=null}
-    fun append(raw:ByteArray,n:Int) {
-        require(n in 0..raw.size)
-        for(i in 0 until n) {
+    fun append(raw:ByteArray,n:Int,start:Int=0) {
+        require(start>=0 && n>=0 && start+n<=raw.size)
+        for(i in start until start+n) {
             work[offset++]=((raw[i].toInt() and 255)-127.5f)/128f
             if(offset==work.size){result=work.copyOf();offset=0}
         }

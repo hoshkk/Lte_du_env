@@ -85,6 +85,8 @@ fun SpectrumTraceCanvas(
     selectedMarker: Int,
     modifier: Modifier = Modifier,
     dbSpan: Double = 100.0,
+    staleBeforeMs: Long = 0,
+    heldFrame: SpectrumFrame? = null,
     onTapFrequency: (Double) -> Unit = {},
 ) {
     val yLabels = remember(refLevelDb, dbSpan) {
@@ -111,20 +113,49 @@ fun SpectrumTraceCanvas(
             ys.forEach { y -> drawLine(AnalyzerColors.GridLine, androidx.compose.ui.geometry.Offset(0f, y), androidx.compose.ui.geometry.Offset(size.width, y), 1f) }
 
             val f = frame
+            val held=heldFrame
+            if(held!=null && f!=null && held.pointCount>1 && held.startMhz==f.startMhz && held.stopMhz==f.stopMhz) {
+                val hp=Path();var connected=false
+                val columns=minOf(held.pointCount,size.width.toInt().coerceAtLeast(1))
+                for(column in 0 until columns){
+                    val first=column*held.pointCount/columns
+                    val end=((column+1)*held.pointCount/columns).coerceAtLeast(first+1)
+                    var peak=Float.NEGATIVE_INFINITY
+                    for(i in first until end)if(held.levelsDb[i].isFinite())peak=maxOf(peak,held.levelsDb[i])
+                    if(!peak.isFinite()){connected=false;continue}
+                    val x=column/(columns-1).coerceAtLeast(1).toFloat()*size.width
+                    val y=((refLevelDb-peak)/dbSpan).toFloat().coerceIn(0f,1f)*size.height
+                    if(connected)hp.lineTo(x,y)else hp.moveTo(x,y)
+                    connected=true
+                }
+                drawPath(hp,AnalyzerColors.AccentBlue.copy(alpha=0.7f),style=Stroke(width=1.5f))
+            }
             if (f != null && f.pointCount > 1) {
                 val path = Path()
+                val previousPath=Path()
                 val n = f.pointCount
                 // Preserve narrow peaks when many FFT bins map to the same screen pixel.
                 val columns=kotlin.math.min(n,size.width.toInt().coerceAtLeast(1))
+                var connected=false
+                var previousConnected=false
                 for(column in 0 until columns) {
                     val first=column*n/columns
                     val end=((column+1)*n/columns).coerceAtLeast(first+1)
                     var peak=Float.NEGATIVE_INFINITY
-                    for(i in first until end)peak=kotlin.math.max(peak,f.levelsDb[i])
+                    for(i in first until end)if(f.levelsDb[i].isFinite())peak=kotlin.math.max(peak,f.levelsDb[i])
+                    if(!peak.isFinite()){connected=false;previousConnected=false;continue}
                     val x=column/(columns-1).coerceAtLeast(1).toFloat()*size.width
                     val y=((refLevelDb-peak)/dbSpan).toFloat().coerceIn(0f,1f)*size.height
-                    if(column==0)path.moveTo(x,y)else path.lineTo(x,y)
+                    val stale=(first until end).any{f.observedAtMs[it]<staleBeforeMs}
+                    if(stale){
+                        if(!previousConnected)previousPath.moveTo(x,y)else previousPath.lineTo(x,y)
+                        previousConnected=true;connected=false
+                    }else{
+                        if(!connected)path.moveTo(x,y)else path.lineTo(x,y)
+                        connected=true;previousConnected=false
+                    }
                 }
+                drawPath(previousPath, AnalyzerColors.TextSecondary.copy(alpha=0.5f), style = Stroke(width = 2f))
                 drawPath(path, AnalyzerColors.Trace, style = Stroke(width = 2.5f))
             }
 

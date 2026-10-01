@@ -14,7 +14,7 @@ class FieldProfilesTest {
             assertEquals(old.centerMhz,p.config.centerMhz,0.0)
             assertEquals(old.spanMhz,p.config.spanMhz,0.0)
             assertEquals(0.0,p.config.refLevelOffsetDb,0.0)
-            assertFalse(p.config.autoGain);assertEquals(1,p.config.manualGainLevel)
+            assertFalse(p.config.autoGain);assertEquals(if(mode==FieldMode.EQUIPMENT)1 else 4,p.config.manualGainLevel)
             SweepMath.plan(p.config)
             assertEquals(mode==FieldMode.EQUIPMENT,p.config.channelPowerEnabled)
             assertEquals(mode==FieldMode.ANTENNA,p.maxHold)

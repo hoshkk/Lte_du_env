@@ -8,17 +8,18 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 
 data class UiState(
-    val config:SweepConfig=SweepConfig(),val frame:SpectrumFrame?=null,val rawFrame:SpectrumFrame?=null,
-    val held:SpectrumFrame?=null,val running:Boolean=false,val demo:Boolean=false,val maxHold:Boolean=false,
+    val selectedMode:FieldMode?=null,
+    val config:SweepConfig=SweepConfig(spanMhz=15.0,integrationBwMhz=10.0,rbwKhz=10.0),val frame:SpectrumFrame?=null,val rawFrame:SpectrumFrame?=null,
+    val completeFrame:SpectrumFrame?=null,val held:SpectrumFrame?=null,val running:Boolean=false,val maxHold:Boolean=false,
     val markers:List<Marker> = (1..5).map{Marker(it)},val selectedMarker:Int=1,
-    val message:String="V4 연결 후 ‘실측 시작’을 누르세요. DEMO는 가상 신호입니다.",
+    val message:String="V4 연결 후 ‘실측 시작’을 누르세요.",
 ) {
     val shownFrame get()=if(maxHold)held?:frame else frame
     val marker get()=markers.first{it.index==selectedMarker}
 }
 class SpectrumViewModel:ViewModel() {
     private val mutable=MutableStateFlow(UiState());val state=mutable.asStateFlow()
-    private var job:Job?=null;private var source:RtlTcpSource?=null;private var generation=0
+    private var job:Job?=null;private var source:SpectrumSource?=null;private var generation=0
     fun stop(){generation++;source?.close();source=null;job?.cancel();job=null;mutable.update{it.copy(running=false,message="정지 — 화면은 마지막 측정값입니다.")}}
     fun error(message:String){stop();mutable.update{it.copy(message=message)}}
     private fun captureKey(c:SweepConfig)=c.copy(refLevelDb=0.0,refLevelOffsetDb=0.0,integrationBwMhz=1.0,channelPowerEnabled=false,dbPerDiv=10.0)
@@ -29,13 +30,13 @@ class SpectrumViewModel:ViewModel() {
         val sameCapture=captureKey(c)==captureKey(old.config)
         val raw=if(sameCapture)old.rawFrame else null
         val f=raw?.let{TraceProcessing().apply(it,c)}
-        mutable.value=old.copy(config=c,frame=f,rawFrame=raw,held=null,running=false,
+        mutable.value=old.copy(config=c,frame=f,rawFrame=raw,completeFrame=null,held=null,running=false,
             markers=refreshed(old.markers,f),message="")
         true
     }catch(e:Exception){mutable.update{it.copy(message=e.message?:"설정 오류")};false}
-    fun applyProfile(profile:FieldProfile):Boolean {
+    fun applyProfile(profile:FieldProfile,mode:FieldMode?=null):Boolean {
         if(!configure(profile.config))return false
-        mutable.update{it.copy(frame=null,rawFrame=null,held=null,maxHold=profile.maxHold,demo=false,
+        mutable.update{it.copy(selectedMode=mode?:it.selectedMode,frame=null,rawFrame=null,completeFrame=null,held=null,maxHold=profile.maxHold,
             markers=(1..5).map{n->Marker(n)},selectedMarker=1,
             message="")}
         return true
@@ -48,21 +49,21 @@ class SpectrumViewModel:ViewModel() {
     fun peak(){Measurements.peak(state.value.shownFrame)?.let{mark(it)}}
     fun clearMarker(){mutable.update{old->old.copy(markers=old.markers.map{if(it.index==old.selectedMarker)Marker(it.index)else it})}}
     fun toggleChannelPower(){mutable.update{it.copy(config=it.config.copy(channelPowerEnabled=!it.config.channelPowerEnabled))}}
-    fun start(demo:Boolean){
+    fun start(nativeContext:android.content.Context?=null){
         stop();val id=generation;val c=state.value.config
         try{SweepMath.plan(c)}catch(e:Exception){error(e.message?:"설정 오류");return}
-        val src=if(demo)null else RtlTcpSource();source=src
-        mutable.update{it.copy(frame=null,rawFrame=null,held=null,markers=refreshed(it.markers,null),running=true,demo=demo,
-            message=if(demo)"DEMO · 가상 신호" else "연결/수신 중 · 넓은 Span은 순차 스윕입니다")}
+        val src:SpectrumSource=if(nativeContext==null)RtlTcpSource() else NativeUsbSource(nativeContext);source=src
+        mutable.update{it.copy(frame=null,rawFrame=null,completeFrame=null,held=null,markers=refreshed(it.markers,null),running=true,
+            message="연결/수신 중 · 넓은 Span은 순차 스윕입니다")}
         job=viewModelScope.launch {
             try {
                 val processing=TraceProcessing()
-                val stream=src?.frames(c)?:SimulatedRepeaterDataSource().spectrum(c).flowOn(Dispatchers.Default)
+                val stream=src.frames(c)
                 stream.map{raw->raw to processing.apply(raw,c)}.flowOn(Dispatchers.Default).collect{(raw,f)->
                     if(id==generation)mutable.update{old->
                         val held=if(old.maxHold)SweepMath.hold(old.held,f)else null
-                        old.copy(rawFrame=raw,frame=f,held=held,markers=refreshed(old.markers,held?:f),
-                            message=if(demo)"DEMO · 현장 측정 아님" else if(f.clippedFraction>0.001)"입력 클리핑 감지: 이득을 낮추거나 감쇠하세요"
+                        old.copy(rawFrame=raw,frame=f,completeFrame=if(f.completedSegments==f.segmentCount)f else old.completeFrame,held=held,markers=refreshed(old.markers,held?:f),
+                            message=if(f.clippedFraction>0.001)"입력 클리핑 감지: 이득을 낮추거나 감쇠하세요"
                             else if(c.autoGain)"수신 중 · AGC ON: 위치별 상대 레벨 비교에 주의하세요"
                             else "수신 중 · 상대 레벨 관측 / PIM 판정 불가")
                     }
@@ -74,13 +75,14 @@ class SpectrumViewModel:ViewModel() {
     fun csv():String {
         val s=state.value;val f=s.shownFrame?:return ""
         return buildString {
-            appendLine("# SpectrumCheck 2.2; ${f.source}; ${f.displayUnit}; max_hold=${s.maxHold}; dc_removed=${f.dcRemoved}")
-            appendLine("# sample_rate_hz=${f.sampleRateHz}; fft=${f.fftSize}; rbw_hz=${f.rbwHz}; enbw_hz=${f.enbwHz}; vbw_khz=${f.vbwKhz}; offset_db=${f.offsetDb}; gain_step=${f.gainStep}; tuner_agc=${f.autoGain}; segments=${f.segmentCount}; start_ms=${f.startedMs}; end_ms=${f.timestampMs}; clipping=${f.clippedFraction}")
+            appendLine("# SpectrumCheck 2.5.1; ${f.source}; ${f.displayUnit}; max_hold=${s.maxHold}; dc_removed=${f.dcRemoved}")
+            appendLine("# sample_rate_hz=${f.sampleRateHz}; fft=${f.fftSize}; rbw_hz=${f.rbwHz}; enbw_hz=${f.enbwHz}; vbw_khz=${f.vbwKhz}; offset_db=${f.offsetDb}; gain_step=${f.gainStep}; tuner_agc=${f.autoGain}; completed_segments=${f.completedSegments}; sweep_ms=${f.lastSweepMs}; tune_settle_ms=${s.config.tuneSettleMs}; native_settle_ms=${s.config.nativeSettleMs}; segments=${f.segmentCount}; start_ms=${f.startedMs}; end_ms=${f.timestampMs}; clipping=${f.clippedFraction}")
             appendLine("# rbw_requested_khz=${s.config.rbwKhz}; ref_level=${s.config.refLevelDb}; db_per_div=${s.config.dbPerDiv}; integration_bw_mhz=${s.config.integrationBwMhz}")
             for(m in s.markers.filter{it.enabled})appendLine("# marker_${m.index}=${m.freqMhz} MHz; ${m.levelDb} ${f.displayUnit}")
-            if(s.config.channelPowerEnabled)Measurements.channelPower(s.frame,s.config.centerMhz,s.config.integrationBwMhz)?.let{
-                appendLine("# live_channel_power=${it.totalDb}; live_psd_per_mhz=${it.psdDbPerMhz}; unit=${s.frame?.displayUnit}; max_hold_not_integrated=true")
+            if(s.config.channelPowerEnabled)Measurements.channelPower(s.completeFrame,s.config.centerMhz,s.config.integrationBwMhz)?.let{
+                appendLine("# live_channel_power=${it.totalDb}; live_psd_per_mhz=${it.psdDbPerMhz}; unit=${s.completeFrame?.displayUnit}; completed_at_ms=${s.completeFrame?.timestampMs}; max_hold_not_integrated=true")
             }
+            f.timingNs?.let { appendLine("# timing_ns_tune_settle_reset_discard_read_dsp=${it.joinToString(",")}") }
             appendLine("frequency_mhz,display_level,level_without_offset,unit,last_observed_at_epoch_ms")
             for(i in f.levelsDb.indices)appendLine("${f.frequencyAt(i)},${f.levelsDb[i]},${f.levelsDb[i]-f.offsetDb},${f.displayUnit},${f.observedAtMs[i]}")
         }

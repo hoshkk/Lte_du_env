@@ -7,15 +7,14 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
-import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.roundToInt
 
 /** Local Android SDR Driver backend; never connects to an external host. */
-class RtlTcpSource {
+class RtlTcpSource: SpectrumSource {
     @Volatile private var socket:Socket?=null
     private fun shutdown(s:Socket){synchronized(s){runCatching { s.getOutputStream().write(byteArrayOf(0x7e,0,0,0,0)) };runCatching{s.close()}}}
-    fun close(){socket?.let{shutdown(it)};socket=null}
-    fun frames(config:SweepConfig):Flow<SpectrumFrame> = flow {
+    override fun close(){socket?.let{shutdown(it)};socket=null}
+    override fun frames(config:SweepConfig):Flow<SpectrumFrame> = flow {
         val plan=SweepMath.plan(config)
         val s=Socket();socket=s
         try {
@@ -32,38 +31,48 @@ class RtlTcpSource {
             if(!config.autoGain)command(4,GAINS[((config.manualGainLevel-1)*(GAINS.size-1)/9.0).roundToInt()])
             // No transmit or bias-tee enable commands are sent.
             coroutineScope {
-                val latest=AtomicReference<FloatArray?>(null)
+                val gate=CaptureGate(plan.fftSize*SpectrumDsp.blockFrames(plan.fftSize,config.vbwKhz))
                 val reader=launch(Dispatchers.IO) {
-                    val assembler=IqAssembler(plan.fftSize*SpectrumDsp.blockFrames(plan.fftSize,config.vbwKhz));val raw=ByteArray(32768)
-                    try {while(isActive){val n=input.read(raw);check(n>0){"USB/드라이버 연결이 끊겼습니다"};assembler.append(raw,n);assembler.take()?.let{latest.set(it)}}}
-                    catch(e:Exception){if(isActive && !s.isClosed)throw e}
+                    val raw=ByteArray(32768)
+                    try {while(isActive){
+                        val n=input.read(raw)
+                        check(n>0){"USB/드라이버 연결이 끊겼습니다"}
+                        gate.append(raw,n,System.nanoTime())
+                    }} catch(e:Exception){if(isActive && !s.isClosed)throw e}
                 }
                 try {
                     var tuned:Double?=null
+                    val levels=FloatArray(plan.pointCount){Float.NaN}
+                    val times=LongArray(plan.pointCount)
+                    var lastSweepMs=0L
                     while(currentCoroutineContext().isActive) {
-                        val started=System.currentTimeMillis();val levels=FloatArray(plan.pointCount);val times=LongArray(plan.pointCount)
+                        val started=System.currentTimeMillis();val startedNanos=System.nanoTime()
                         var clipped=0L;var samples=0L
-                        for(seg in plan.segments) {
+                        for((segmentIndex,seg) in plan.segments.withIndex()) {
                             if(tuned!=seg.centerMhz) {
-                                command(1,(seg.centerMhz*1e6).roundToInt());tuned=seg.centerMhz
-                                // Reader continuously drains TCP; discard after settling. rtl_tcp has no tune ACK.
-                                delay(650);latest.set(null)
+                                // Block capture before sending tune; arm again after the write completes.
+                                gate.arm(System.nanoTime(),1000)
+                                command(1,(seg.centerMhz*1e6).roundToInt())
+                                gate.arm(System.nanoTime(),if(tuned==null)maxOf(250,config.tuneSettleMs)else config.tuneSettleMs)
+                                tuned=seg.centerMhz
                             }
-                            val iq=withTimeout(4000){var v:FloatArray?=null;while(v==null){v=latest.getAndSet(null);if(v==null)delay(5)};v}
+                            val iq=withTimeout(4000){var v:FloatArray?=null;while(v==null){v=gate.take();if(v==null)delay(5)};v}
                             clipped+=iq.count { it<=-0.992f || it>=0.992f };samples+=iq.size
                             val fft=SpectrumDsp.spectrum(iq,plan.fftSize,config.removeDc,config.vbwKhz)
                             val now=System.currentTimeMillis()
                             for(k in 0 until seg.count){levels[seg.startIndex+k]=fft[seg.fftStart+k];times[seg.startIndex+k]=now}
-                        }
-                        emit(SpectrumFrame(plan.startMhz,plan.stopMhz,levels,System.currentTimeMillis(),started,
+                        if(segmentIndex==plan.segments.lastIndex)lastSweepMs=(System.nanoTime()-startedNanos)/1_000_000
+                        emit(SpectrumFrame(plan.startMhz,plan.stopMhz,levels.copyOf(),System.currentTimeMillis(),started,
                             "RTL-SDR / SDR Driver","dBFS",config.manualGainLevel,SweepMath.RATE,plan.fftSize,
-                            plan.enbwHz,plan.segments.size,clipped.toDouble()/samples,config.removeDc,times,
-                            rbwHz=plan.rbwHz,vbwKhz=config.vbwKhz,autoGain=config.autoGain))
-                        delay(100)
+                            plan.enbwHz,plan.segments.size,clipped.toDouble()/samples,config.removeDc,times.copyOf(),
+                            rbwHz=plan.rbwHz,vbwKhz=config.vbwKhz,autoGain=config.autoGain,completedSegments=segmentIndex+1,lastSweepMs=lastSweepMs))
+                        }
+                        // Single-segment acquisition stays tuned; cap drawing at roughly 30 updates/s.
+                        if(plan.segments.size==1)delay(33)
                     }
                 } finally {reader.cancel();shutdown(s)}
             }
         } finally {shutdown(s);if(socket===s)socket=null}
-    }.flowOn(Dispatchers.IO)
+    }.flowOn(Dispatchers.IO).conflate()
     companion object {val GAINS=intArrayOf(0,9,14,27,37,77,87,125,144,157,166,197,207,229,254,280,297,328,338,364,372,386,402,421,434,439,445,480,496)}
 }

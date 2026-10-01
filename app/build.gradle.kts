@@ -6,13 +6,16 @@ plugins {
 android {
     namespace = "com.lteduenv.spectrum"
     compileSdk = 34
+    ndkVersion = "27.2.12479018"
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
 
     defaultConfig {
-        applicationId = "com.lteduenv.spectrum"
+        applicationId = "com.lteduenv.spectrum.speed"
         minSdk = 26
         targetSdk = 34
-        versionCode = 6
-        versionName = "2.2.1-rtl-v4"
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+        versionCode = 14
+        versionName = "2.5.2-usb"
     }
 
     buildTypes {

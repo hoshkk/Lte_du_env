@@ -25,6 +25,8 @@ data class SweepConfig(
     val channelPowerEnabled:Boolean=false,
     val autoGain:Boolean=false,
     val dbPerDiv:Double=10.0,
+    val tuneSettleMs:Int=80,
+    val nativeSettleMs:Int=10,
 )
 data class SpectrumFrame(
     val startMhz:Double,
@@ -32,8 +34,8 @@ data class SpectrumFrame(
     val levelsDb:FloatArray,
     val timestampMs:Long,
     val startedMs:Long=timestampMs,
-    val source:String="DEMO",
-    val unit:String="DEMO dB",
+    val source:String="RTL-SDR",
+    val unit:String="dBFS",
     val gainStep:Int=1,
     val sampleRateHz:Int=2_400_000,
     val fftSize:Int=2048,
@@ -46,9 +48,12 @@ data class SpectrumFrame(
     val rbwHz:Double=0.0,
     val vbwKhz:Double=0.0,
     val autoGain:Boolean=false,
+    val completedSegments:Int=segmentCount,
+    val lastSweepMs:Long=0,
+    val timingNs:LongArray?=null,
 ) {
     val pointCount get()=levelsDb.size
-    val displayUnit get()=if(offsetDb==0.0)unit else if(source=="DEMO")"DEMO 상대 dB (Offset)" else "상대 dB (Offset)"
+    val displayUnit get()=if(offsetDb==0.0)unit else "상대 dB (Offset)"
     fun frequencyAt(i:Int)=startMhz+i.toDouble()*(stopMhz-startMhz)/(pointCount-1).coerceAtLeast(1)
     fun levelAt(f:Double):Float {
         if(pointCount==0 || f !in startMhz..stopMhz) return Float.NaN

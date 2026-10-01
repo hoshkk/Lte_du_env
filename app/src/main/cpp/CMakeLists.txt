@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(spectrumusb C)
+add_subdirectory(librtlsdr)
+add_library(spectrumusb SHARED spectrum_usb.c)
+target_link_libraries(spectrumusb librtlsdr log)
+target_link_options(spectrumusb PRIVATE "-Wl,-z,max-page-size=16384")

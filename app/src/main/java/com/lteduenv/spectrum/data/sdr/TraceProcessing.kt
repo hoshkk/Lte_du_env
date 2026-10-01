@@ -29,7 +29,7 @@ data class ChannelPower(val totalDb:Double,val psdDbPerMhz:Double)
 object Measurements {
     /** Integral of PSD: Hann coherent-tone normalized bins are divided by ENBW. */
     fun channelPower(f:SpectrumFrame?,centerMhz:Double,bwMhz:Double):ChannelPower? {
-        if(f==null || f.pointCount<2 || !centerMhz.isFinite() || !bwMhz.isFinite() || bwMhz<=0 || f.enbwHz<=0)return null
+        if(f==null || f.completedSegments<f.segmentCount || f.pointCount<2 || !centerMhz.isFinite() || !bwMhz.isFinite() || bwMhz<=0 || f.enbwHz<=0)return null
         val step=(f.stopMhz-f.startMhz)/(f.pointCount-1)
         if(step<=0)return null
         val low=centerMhz-bwMhz/2;val high=centerMhz+bwMhz/2
