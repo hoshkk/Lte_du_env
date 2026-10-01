@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -39,3 +41,21 @@ jobs:
         with:
           name: spectrum-check-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publish APK to a stable "latest" Release
+        # Actions artifacts are a zip-of-a-zip served through a redirect that is
+        # flaky to download from mobile browsers and expires after a few months.
+        # A GitHub Release asset is a single stable, non-expiring, directly
+        # downloadable file - same link every build, just updated in place.
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest build (${{ github.sha }})
+          body: |
+            Auto-published debug APK from commit ${{ github.sha }} on branch `${{ github.ref_name }}`.
+            This release is overwritten on every push - it always points at the most recent build.
+          files: app/build/outputs/apk/debug/app-debug.apk
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
