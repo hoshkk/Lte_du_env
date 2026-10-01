@@ -2142,10 +2142,12 @@ int rtlsdr_open2(rtlsdr_dev_t **out_dev, int fd, const char * devicePath) {
 
 	dev->rtl_xtal = DEF_RTL_XTAL_FREQ;
 
-	/* perform a dummy write, if it fails, reset the device */
-	if (rtlsdr_write_reg(dev, USBB, USB_SYSCTL, 0x09, 1) < 0) {
-		LOGI("ERROR: Resetting device...\n");
-		libusb_reset_device(dev->devh);
+	/* Android owns enumeration and the original fd. A bus reset may invalidate
+	 * that handle. Fail opening cleanly instead of continuing after a reset. */
+	r = rtlsdr_write_reg(dev, USBB, USB_SYSCTL, 0x09, 1);
+	if (r != 1) {
+		if (r >= 0) r = LIBUSB_ERROR_IO;
+		goto err;
 	}
 
 	rtlsdr_init_baseband(dev);

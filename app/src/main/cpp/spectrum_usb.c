@@ -25,7 +25,7 @@ static int reset_checked(JNIEnv *e,rtlsdr_dev_t *d){
 JNIEXPORT jlong JNICALL Java_com_lteduenv_spectrum_data_sdr_NativeRtl_open(JNIEnv *e,jobject o,jint fd,jstring path,jboolean agc,jint gain){
  const char *p=(*e)->GetStringUTFChars(e,path,0);rtlsdr_dev_t *d=0;
  int rc=rtlsdr_open2(&d,fd,p);(*e)->ReleaseStringUTFChars(e,path,p);
- if(rc<0 || !d){fail(e,"USB 직접 열기 실패: SDR Driver 등 다른 앱을 종료하고 동글을 다시 연결하세요");return 0;}
+ if(rc<0 || !d){char msg[192];snprintf(msg,sizeof(msg),"USB 열기 실패 (코드 %d). SDR Driver를 종료하고 OTG를 다시 연결하세요",rc);fail(e,msg);return 0;}
  enum rtlsdr_tuner t=rtlsdr_get_tuner_type(d);
  if(t!=RTLSDR_TUNER_R820T && t!=RTLSDR_TUNER_R828D){rtlsdr_close(d);fail(e,"R820T/R828D 튜너만 지원합니다");return 0;}
  if(rtlsdr_set_sample_rate(d,2400000)<0 || rtlsdr_set_agc_mode(d,0)<0 ||

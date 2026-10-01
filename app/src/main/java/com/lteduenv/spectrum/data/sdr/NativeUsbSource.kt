@@ -62,9 +62,14 @@ class NativeUsbSource(context:Context):SpectrumSource {
         deviceLock.withLock {
             val plan=SweepMath.plan(config)
             val manager=context.getSystemService(Context.USB_SERVICE) as UsbManager
-            val devices=manager.deviceList.values.filter{it.vendorId==0x0bda && it.productId in listOf(0x2832,0x2838)}
-            check(devices.size==1){if(devices.isEmpty())"RTL-SDR USB 장치를 찾지 못했습니다" else "RTL-SDR은 한 대만 연결하세요"}
-            val device=devices.single();permission(manager,device)
+            val device=discoverUsb(
+                snapshot={manager.deviceList.values.toList()},
+                supported={it.vendorId==0x0bda && it.productId in listOf(0x2832,0x2838)},
+                describe={"%04X:%04X".format(it.vendorId,it.productId)},
+                pause={delay(250)},
+                checkActive={if(stopped.get())throw CancellationException()}
+            )
+            permission(manager,device)
             currentCoroutineContext().ensureActive();check(!stopped.get()){"측정 취소"}
             val native=NativeRtl()
             val connection=manager.openDevice(device)?:error("USB 열기 실패")
