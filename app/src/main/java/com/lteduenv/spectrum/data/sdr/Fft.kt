@@ -9,6 +9,22 @@ import kotlin.math.sin
 object Fft {
 
     /**
+     * The Hann window only depends on [size], which stays fixed for an entire sweep (it only
+     * changes when RBW/VBW changes) - every bin's weight and their sum used to be recomputed
+     * with a fresh `cos()` call per sample on *every* FFT, which is called once per VBW block
+     * frame, once per sweep segment, continuously for as long as a measurement runs. Caching it
+     * per size turns that into a one-time cost. Numerically identical to computing it inline:
+     * same per-sample formula, same Double accumulation order for the sum.
+     */
+    private val hannWindows = java.util.concurrent.ConcurrentHashMap<Int, Pair<FloatArray, Double>>()
+    private fun hann(size: Int): Pair<FloatArray, Double> = hannWindows.getOrPut(size) {
+        val window = FloatArray(size) { (0.5 - 0.5 * cos(2.0 * PI * it / (size - 1))).toFloat() }
+        var sum = 0.0
+        for (w in window) sum += w
+        window to sum
+    }
+
+    /**
      * Runs an FFT over interleaved [I0, Q0, I1, Q1, ...] samples (as produced by an RTL-SDR's
      * ByteToFloatSampleAdapter-style conversion) and returns per-bin power in dB, FFT-shifted so
      * index 0 is the most negative frequency and the last index is the most positive - i.e.
@@ -20,24 +36,25 @@ object Fft {
         val im = FloatArray(size)
         require(iqInterleaved.size == size * 2) { "Incomplete IQ frame" }
         val pairs = size
-        var mi=0.0; var mq=0.0; var windowSum=0.0
+        var mi=0.0; var mq=0.0
         if(removeDc) {
             for(i in 0 until size) { mi+=iqInterleaved[2*i]; mq+=iqInterleaved[2*i+1] }
             mi/=size; mq/=size
         }
+        // Hann window to reduce spectral leakage.
+        val (window, windowSum) = hann(size)
         for (i in 0 until pairs) {
-            // Hann window to reduce spectral leakage.
-            val w = (0.5 - 0.5 * cos(2.0 * PI * i / (size - 1))).toFloat()
-            windowSum+=w
+            val w = window[i]
             re[i] = ((iqInterleaved[2*i]-mi)*w).toFloat()
             im[i] = ((iqInterleaved[2*i+1]-mq)*w).toFloat()
         }
         fftInPlace(re, im)
         val shifted = FloatArray(size)
+        val windowSumSq = windowSum * windowSum
         for (k in 0 until size) {
             val srcIndex = (k + size / 2) % size
             val power = re[srcIndex] * re[srcIndex] + im[srcIndex] * im[srcIndex]
-            shifted[k] = 10f * log10((power / (windowSum * windowSum) + 1e-15).toDouble()).toFloat()
+            shifted[k] = 10f * log10((power / windowSumSq + 1e-15).toDouble()).toFloat()
         }
         return shifted
     }

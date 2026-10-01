@@ -13,6 +13,14 @@ class SpectrumMathTest {
    assertEquals(n/2+bin,db.indices.maxBy{db[it]});assertEquals(-6.0206,db[n/2+bin].toDouble(),0.01)
   }
  }
+ @Test fun cachedWindowIsConsistentAcrossInterleavedSizes(){
+  // Fft caches the Hann window per FFT size; interleaving sizes must not cross-contaminate it.
+  fun tone(n:Int,bin:Int)=FloatArray(n*2){i->val phase=2*PI*bin*(i/2)/n;if(i%2==0)(0.5*cos(phase)).toFloat()else(0.5*sin(phase)).toFloat()}
+  for(round in 0..2)for(n in listOf(32,2048,512)){
+   val db=Fft.magnitudeSpectrumDb(tone(n,5),n)
+   assertEquals(n/2+5,db.indices.maxBy{db[it]});assertEquals(-6.0206,db[n/2+5].toDouble(),0.01)
+  }
+ }
  @Test fun iqAcrossOddPackets(){val a=IqAssembler(2);a.append(byteArrayOf(0,127,(-1).toByte()),3);assertNull(a.take());a.append(byteArrayOf((-128).toByte()),1);assertArrayEquals(floatArrayOf(-127.5f/128,-0.5f/128,127.5f/128,0.5f/128),a.take(),0f)}
  @Test fun sweepHasNoGapsOrMislabelledBins(){for(span in listOf(0.05,1.5,1.799,1.8,2.0,15.0,25.0,35.0)){
   val p=SweepMath.plan(SweepConfig(centerMhz=900.0,spanMhz=span));var next=0
