@@ -72,7 +72,11 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
         val vb = vbw.trim().takeIf { it.isNotEmpty() && !it.equals("AUTO", ignoreCase = true) }
         val vbv = vb?.toDoubleOrNull()?.takeIf { it > 0 }
         if (vb != null && vb.toDoubleOrNull() == null) { error = "VBW 입력을 확인하세요"; return null }
-        if (nums.any { it == null } || a == null || st == null || (vb != null && vbv == null)) { error = "숫자 입력을 확인하세요"; return null }
+        // Name the field that does not parse (VBW 0 = AUTO is valid, see above).
+        val names = listOf("Center", "Span", "채널 BW", "RBW", "Offset", "임계", "Ref Level", "dB/div")
+        val bad = names.filterIndexed { i, _ -> nums[i] == null } +
+            listOfNotNull(if (a == null) "평균" else null, if (st == null) "안정화 대기" else null)
+        if (bad.isNotEmpty()) { error = "숫자 입력을 확인하세요: ${bad.joinToString(", ")}"; return null }
         val v = nums.map { it!! }
         return current.copy(
             band = band?.takeIf { it.rxCenterMhz * 1e6 in (v[0] - v[1] / 2) * 1e6..(v[0] + v[1] / 2) * 1e6 },
