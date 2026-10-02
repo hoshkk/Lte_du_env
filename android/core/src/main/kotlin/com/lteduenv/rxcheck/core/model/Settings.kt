@@ -1,5 +1,8 @@
 package com.lteduenv.rxcheck.core.model
 
+import com.lteduenv.rxcheck.core.sweep.SweepPlan
+import kotlin.math.roundToInt
+
 enum class Mode(val title: String) {
     /** RX (uplink) path at the equipment: channel power, per-MHz PSD, rise vs. baseline. */
     REVERSE("장비 리버스"),
@@ -32,8 +35,16 @@ data class Settings(
     val centerMhz: Double = Band.B8.rxCenterMhz,
     val spanMhz: Double = Band.B8.reverseSpanMhz,
     val channelBwMhz: Double = Band.B8.channelBwMhz,
-    val rbwKhz: Double = 100.0,
+    /** Requested RBW; the FFT gives the nearest of [RBW_CHOICES_KHZ] ([rbwActualHz]). */
+    val rbwKhz: Double = 54.0,
+    /** FFT frames power-averaged per segment (used when [vbwKhz] is null = VBW AUTO). */
     val averages: Int = 16,
+    /**
+     * VBW. There is no analog video filter: a set VBW is turned into an
+     * averaging count N = RBW / VBW (rounded, 1..256), the usual FFT-analyzer
+     * equivalent. null = AUTO (use [averages]).
+     */
+    val vbwKhz: Double? = null,
     /** Tuner gain step 0..15, or null for tuner AGC. */
     val gainStep: Int? = 2,
     val offsetDb: Double = 0.0,
@@ -66,7 +77,8 @@ data class Settings(
             "숫자 입력을 확인하세요"
         spanMhz !in 0.05..MAX_SPAN_MHZ -> "Span 범위: 0.05–50 MHz"
         startMhz < 24.0 || stopMhz > 1766.0 -> "측정 범위 전체가 24–1766 MHz 안이어야 합니다 (RTL-SDR V4 한계)"
-        rbwKhz !in 1.0..300.0 -> "RBW 범위: 1–300 kHz"
+        rbwKhz !in 0.1..300.0 -> "RBW 범위: 0.1–300 kHz"
+        vbwKhz != null && (!vbwKhz.isFinite() || vbwKhz !in 0.001..300.0) -> "VBW 범위: 0.001–300 kHz 또는 AUTO"
         averages !in 1..256 -> "평균 횟수: 1–256"
         gainStep != null && gainStep !in 0..MAX_GAIN_STEP -> "이득 단계: 0–15"
         settleMs !in 0..100 -> "안정화 대기: 0–100 ms"
@@ -80,15 +92,25 @@ data class Settings(
         val b = band ?: return copy(mode = mode)
         return when (mode) {
             Mode.REVERSE -> copy(mode = mode, band = b, centerMhz = b.rxCenterMhz, spanMhz = b.reverseSpanMhz,
-                channelBwMhz = b.channelBwMhz, rbwKhz = 100.0, averages = 16, gainStep = 2,
+                channelBwMhz = b.channelBwMhz, rbwKhz = 54.0, averages = 16, vbwKhz = null, gainStep = 2,
                 maxHold = false, thresholdDb = 6.0, channelPower = true)
             Mode.SPURIOUS -> copy(mode = mode, band = b,
                 centerMhz = (b.spuriousStartMhz + b.spuriousStopMhz) / 2,
                 spanMhz = b.spuriousStopMhz - b.spuriousStartMhz,
-                channelBwMhz = b.channelBwMhz, rbwKhz = 10.0, averages = 4, gainStep = 8,
+                channelBwMhz = b.channelBwMhz, rbwKhz = 13.5, averages = 4, vbwKhz = null, gainStep = 8,
                 maxHold = true, thresholdDb = 10.0, channelPower = false)
         }
     }
+
+    /** RBW the sweep actually uses (Hann -3 dB width of the chosen FFT bin), Hz. */
+    fun rbwActualHz(sampleRate: Int = SAMPLE_RATE) = 1.44 * sampleRate / SweepPlan.fftSizeFor(rbwKhz * 1e3, sampleRate)
+
+    /** Frames averaged per segment: from VBW when set, else [averages]. */
+    fun effectiveAverages(sampleRate: Int = SAMPLE_RATE): Int =
+        vbwKhz?.let { (rbwActualHz(sampleRate) / (it * 1e3)).roundToInt().coerceIn(1, 256) } ?: averages
+
+    /** VBW equivalent of the averaging in use (RBW / N), Hz. */
+    fun vbwActualHz(sampleRate: Int = SAMPLE_RATE) = rbwActualHz(sampleRate) / effectiveAverages(sampleRate)
 
     /** Largest span that stays inside 24–1766 MHz around the current centre. */
     fun maxSpanAtCenter() = minOf(MAX_SPAN_MHZ, 2 * (centerMhz - 24.0), 2 * (1766.0 - centerMhz))
@@ -102,5 +124,12 @@ data class Settings(
     companion object {
         const val MAX_SPAN_MHZ = 50.0
         const val MAX_GAIN_STEP = 15
+        const val SAMPLE_RATE = 2_400_000
+
+        /** Every RBW the FFT can give at 2.4 MS/s (FFT 64..16384), widest first, kHz. */
+        val RBW_CHOICES_KHZ: List<Double> = (6..14).map { 1.44 * SAMPLE_RATE / (1 shl it) / 1e3 }
+
+        /** VBW/RBW ratios offered in the settings (= averaging 1, 3, 10, 30, 100). */
+        val VBW_RATIOS = listOf(1, 3, 10, 30, 100)
     }
 }

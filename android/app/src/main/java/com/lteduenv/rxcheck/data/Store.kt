@@ -45,6 +45,7 @@ class Store(context: Context) {
                 channelBwMhz = prefs.double(p + "chbw", d.channelBwMhz),
                 rbwKhz = prefs.double(p + "rbw", d.rbwKhz),
                 averages = prefs.getInt(p + "avg", d.averages),
+                vbwKhz = prefs.double(p + "vbw", -1.0).takeIf { it > 0 },
                 gainStep = prefs.getInt(p + "gain", d.gainStep ?: -1).takeIf { it >= 0 },
                 offsetDb = prefs.double(p + "offset", 0.0),
                 maxHold = prefs.getBoolean(p + "hold", d.maxHold),
@@ -68,7 +69,7 @@ class Store(context: Context) {
             .putString(p + "mode", s.mode.name).putString(p + "band", s.band?.name)
             .putString(p + "center", s.centerMhz.toString()).putString(p + "span", s.spanMhz.toString())
             .putString(p + "chbw", s.channelBwMhz.toString()).putString(p + "rbw", s.rbwKhz.toString())
-            .putInt(p + "avg", s.averages).putInt(p + "gain", s.gainStep ?: -1)
+            .putInt(p + "avg", s.averages).putString(p + "vbw", s.vbwKhz?.toString() ?: "-1").putInt(p + "gain", s.gainStep ?: -1)
             .putString(p + "offset", s.offsetDb.toString()).putBoolean(p + "hold", s.maxHold)
             .putString(p + "thr", s.thresholdDb.toString()).putBoolean(p + "fast", s.fastTune)
             .putBoolean(p + "narrowif", s.narrowIf).putInt(p + "settle", s.settleMs)

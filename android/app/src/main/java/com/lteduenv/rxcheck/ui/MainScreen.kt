@@ -57,6 +57,12 @@ import com.lteduenv.rxcheck.core.model.Settings
 import java.util.Locale
 
 internal fun Double.f(d: Int) = String.format(Locale.US, "%.${d}f", this)
+/** Hz as a short kHz label: 54k, 13.5k, 0.84k. */
+internal fun khz(hz: Double): String {
+    val k = hz / 1e3
+    return (if (k >= 100) k.f(0) else if (k >= 10) k.f(1).removeSuffix(".0") else if (k >= 1) k.f(2).trimEnd('0').removeSuffix(".") else k.f(3).trimEnd('0')) + "k"
+}
+
 private fun signed(v: Double, d: Int = 1) = (if (v >= 0) "+" else "") + v.f(d)
 
 internal val Good = Color(0xFF33C47A)
@@ -226,8 +232,8 @@ private fun InfoLine(state: UiState) {
     val parts = listOfNotNull(
         "CENTER ${s.centerMhz.f(3)}",
         "SPAN ${s.spanMhz.f(if (s.spanMhz < 10) 2 else 1)} MHz",
-        "RBW ${s.rbwKhz.f(if (s.rbwKhz < 10) 1 else 0)}k",
-        "평균 ${s.averages}",
+        "RBW ${khz(s.rbwActualHz())}",
+        "VBW ${khz(s.vbwActualHz())}" + (if (s.vbwKhz == null) " (평균 ${s.effectiveAverages()})" else ""),
         if (s.offsetDb != 0.0) "Offset ${signed(s.offsetDb)}" else null,
         // Full-span completion time vs. how often the screen gets new data (every segment).
         t?.let { "SPAN 완료 ${it.totalMs} ms (${if (it.totalMs > 0) (1000.0 / it.totalMs).f(1) else "-"}회/s)" },
@@ -448,7 +454,7 @@ private fun PresetDialog(state: UiState, vm: MeasureViewModel, onDismiss: () -> 
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 val s = state.settings
-                Text("현재: ${s.mode.title} · ${s.centerMhz.f(3)} MHz / Span ${s.spanMhz.f(2)} · RBW ${s.rbwKhz.f(1)} kHz · Gain ${s.gainStep ?: "AGC"} · Offset ${s.offsetDb.f(1)} dB",
+                Text("현재: ${s.mode.title} · ${s.centerMhz.f(3)} MHz / Span ${s.spanMhz.f(2)} · RBW ${khz(s.rbwActualHz())} · VBW ${khz(s.vbwActualHz())} · Gain ${s.gainStep ?: "AGC"} · Offset ${s.offsetDb.f(1)} dB",
                     fontSize = 12.sp)
                 for (m in Mode.values()) {
                     Text(m.title + if (m in state.presets) " (저장값 있음)" else "", fontWeight = FontWeight.Bold)

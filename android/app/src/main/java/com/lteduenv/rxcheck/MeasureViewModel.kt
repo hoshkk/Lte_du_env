@@ -180,7 +180,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
             }
             applied = s
             val prev = _state.value.last
-            val trace = engine.sweep(p, s.averages, s.dcPatch, s.iqMeanRemoval, onSegment = { part ->
+            val trace = engine.sweep(p, s.effectiveAverages(rx.sampleRate), s.dcPatch, s.iqMeanRemoval, onSegment = { part ->
                 val upto = part.plan.segments[part.completedSegments - 1].let { it.firstPoint + it.count }
                 val merged = if (prev != null && prev.plan == part.plan) {
                     val v = prev.levelsDb.copyOf()
@@ -434,7 +434,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
         return buildString {
             append("# RX 점검; mode=${s.mode.title}; band=${s.band?.label ?: "-"}; center_mhz=${s.centerMhz}; span_mhz=${s.spanMhz}; " +
                 "channel_bw_mhz=${s.channelBwMhz}; rbw_hz=${fmt("%.0f", 1.44 * t.plan.binHz)}; enbw_hz=${fmt("%.0f", t.enbwHz)}; " +
-                "averages=${s.averages}; gain_step=${s.gainStep ?: "AGC"}; if_filter=${if (s.narrowIf) "narrow" else "6MHz"}; " +
+                "averages=${s.effectiveAverages()}; vbw_hz=${fmt("%.0f", s.vbwActualHz())}; vbw_setting=${s.vbwKhz?.let { "${it}k" } ?: "AUTO"}; gain_step=${s.gainStep ?: "AGC"}; if_filter=${if (s.narrowIf) "narrow" else "6MHz"}; " +
                 "fast_tune=${s.fastTune}; settle_ms=${s.settleMs}; offset_db=${s.offsetDb}; clipping=${fmt("%.5f", t.clippedFraction)}; " +
                 "sweep_ms=${t.timing?.totalMs ?: ""}; device=${st.device ?: ""}; unit=dBFS+offset (상대값)\n")
             st.results?.let { r ->

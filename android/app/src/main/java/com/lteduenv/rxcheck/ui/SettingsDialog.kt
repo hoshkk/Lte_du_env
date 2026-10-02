@@ -47,6 +47,7 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
     var chBw by remember { mutableStateOf(current.channelBwMhz.toString()) }
     var rbw by remember { mutableStateOf(current.rbwKhz.toString()) }
     var avg by remember { mutableStateOf(current.averages.toString()) }
+    var vbw by remember { mutableStateOf(current.vbwKhz?.toString() ?: "") }
     var offset by remember { mutableStateOf(current.offsetDb.toString()) }
     var threshold by remember { mutableStateOf(current.thresholdDb.toString()) }
     var ref by remember { mutableStateOf(current.refLevelDb.toString()) }
@@ -66,11 +67,13 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
     fun build(): Settings? {
         val nums = listOf(center, span, chBw, rbw, offset, threshold, ref, div).map { it.trim().toDoubleOrNull() }
         val a = avg.trim().toIntOrNull(); val st = settle.trim().toIntOrNull()
-        if (nums.any { it == null } || a == null || st == null) { error = "숫자 입력을 확인하세요"; return null }
+        val vb = vbw.trim().takeIf { it.isNotEmpty() && !it.equals("AUTO", ignoreCase = true) }
+        val vbv = vb?.toDoubleOrNull()
+        if (nums.any { it == null } || a == null || st == null || (vb != null && vbv == null)) { error = "숫자 입력을 확인하세요"; return null }
         val v = nums.map { it!! }
         return current.copy(
             band = band?.takeIf { it.rxCenterMhz * 1e6 in (v[0] - v[1] / 2) * 1e6..(v[0] + v[1] / 2) * 1e6 },
-            centerMhz = v[0], spanMhz = v[1], channelBwMhz = v[2], rbwKhz = v[3], averages = a,
+            centerMhz = v[0], spanMhz = v[1], channelBwMhz = v[2], rbwKhz = v[3], averages = a, vbwKhz = vbv,
             offsetDb = v[4], thresholdDb = v[5], refLevelDb = v[6], dbPerDiv = v[7],
             gainStep = if (agc) null else gain.roundToInt(), fastTune = fast, narrowIf = narrowIf,
             settleMs = st, channelPower = chPower, dcPatch = dc,
@@ -113,7 +116,7 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
                                 if (sp != null && sp > 0) {
                                     Text("START ${(c - sp / 2).f(3)} · STOP ${(c + sp / 2).f(3)} MHz", fontSize = 12.sp)
                                     if (sp > maxSpan) Text("수신 범위(24–1766 MHz)를 벗어납니다", color = Bad, fontSize = 12.sp)
-                                    val segs = SweepPlan.create(c * 1e6, sp * 1e6, (rbw.toDoubleOrNull() ?: 100.0) * 1e3).segments.size
+                                    val segs = SweepPlan.create(c * 1e6, sp * 1e6, (rbw.toDoubleOrNull() ?: 54.0) * 1e3).segments.size
                                     Text(if (segs == 1) "1구간 · 재동조 없이 연속 갱신 (가장 빠름)" else "${segs}구간 순차 스윕", fontSize = 12.sp, color = Dim)
                                 }
                             }
@@ -141,33 +144,56 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
                                 "커플러·케이블 손실 등 알고 있는 값만 넣으세요. Offset으로 dBm 교정이 되지는 않습니다.", fontSize = 11.sp, color = Dim)
                         }
                         2 -> {
-                            Field("RBW (kHz)", rbw, { rbw = it })
+                            // RBW: only values the FFT can actually give (2.4 MS/s, FFT 64..16384).
+                            val draft = current.copy(rbwKhz = rbw.toDoubleOrNull() ?: current.rbwKhz,
+                                averages = avg.toIntOrNull()?.coerceIn(1, 256) ?: current.averages,
+                                vbwKhz = vbw.trim().toDoubleOrNull())
+                            val rbwHz = draft.rbwActualHz()
+                            Text("RBW (분해능 대역폭)", fontSize = 13.sp)
                             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                listOf(3.0, 10.0, 30.0, 100.0).forEach { v ->
-                                    FilterChip(selected = rbw.toDoubleOrNull() == v, onClick = { rbw = v.toString() }, label = { Text("RBW ${v.toInt()}k") })
+                                Settings.RBW_CHOICES_KHZ.forEach { v ->
+                                    FilterChip(selected = kotlin.math.abs(rbwHz / 1e3 - v) < 1e-6, onClick = { rbw = v.toString() },
+                                        label = { Text(khz(v * 1e3)) })
                                 }
                             }
-                            rbw.toDoubleOrNull()?.takeIf { it in 1.0..300.0 }?.let { r ->
-                                val n = SweepPlan.fftSizeFor(r * 1e3, 2_400_000)
-                                val bin = 2_400_000.0 / n
-                                Text("적용: RBW ${(1.44 * bin / 1e3).f(2)} kHz · ENBW ${(1.5 * bin / 1e3).f(2)} kHz · FFT $n", fontSize = 12.sp)
-                            }
-                            Field("평균 (구간당 FFT 프레임 수)", avg, { avg = it })
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                listOf(1, 4, 16, 64).forEach { v ->
-                                    FilterChip(selected = avg.toIntOrNull() == v, onClick = { avg = v.toString() }, label = { Text("평균 $v") })
+                            val n = SweepPlan.fftSizeFor(rbwHz, Settings.SAMPLE_RATE)
+                            Text("RBW ${khz(rbwHz)} · ENBW ${khz(Settings.SAMPLE_RATE * 1.5 / n)} · FFT ${n}점" +
+                                (rbw.toDoubleOrNull()?.takeIf { kotlin.math.abs(it - rbwHz / 1e3) > 0.01 }?.let { " (요청 ${it}k → 적용)" } ?: ""),
+                                fontSize = 12.sp)
+                            Text("RBW가 좁을수록 약한 협대역 신호가 잡음 위로 잘 보이고 가까운 신호가 분리되지만, 구간당 수집 시간이 늘어납니다. " +
+                                "채널 전력은 ENBW로 보정하므로 RBW와 관계없이 같은 값입니다. 54k보다 넓은 RBW는 이 동글(2.4 MS/s)에서 만들 수 없습니다.",
+                                fontSize = 11.sp, color = Dim)
+
+                            Text("VBW (비디오 대역폭)", fontSize = 13.sp)
+                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                FilterChip(selected = draft.vbwKhz == null, onClick = { vbw = "" }, label = { Text("AUTO (평균 직접)") })
+                                Settings.VBW_RATIOS.forEach { r ->
+                                    val v = rbwHz / r / 1e3
+                                    FilterChip(selected = draft.vbwKhz != null && kotlin.math.abs(draft.vbwKhz!! - v) < 1e-6,
+                                        onClick = { vbw = v.toString() }, label = { Text(khz(v * 1e3)) })
                                 }
                             }
-                            Text("평균은 같은 잡음이 bin마다 출렁이는 것을 줄입니다(1장: ±5 dB 이상, 16장: 약 ±1 dB). 계측기의 VBW 역할이며 " +
-                                "16장 평균은 2.4 MS/s에서 구간당 수 ms만 더 걸립니다. 순간 신호는 평균 1~4 + Max Hold로 보세요.",
+                            Field("VBW (kHz, 비우면 AUTO)", vbw, { vbw = it })
+                            if (draft.vbwKhz == null) {
+                                Field("평균 (구간당 FFT 프레임 수)", avg, { avg = it })
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    listOf(1, 4, 16, 64).forEach { v ->
+                                        FilterChip(selected = avg.toIntOrNull() == v, onClick = { avg = v.toString() }, label = { Text("평균 $v") })
+                                    }
+                                }
+                            }
+                            Text("적용: VBW ${khz(draft.vbwActualHz())} = RBW ÷ 평균 ${draft.effectiveAverages()}회", fontSize = 12.sp)
+                            Text("FFT 방식이라 아날로그 VBW 필터 대신 같은 효과의 전력 평균을 씁니다(평균 N = RBW ÷ VBW, 1~256). " +
+                                "VBW를 좁히면 잡음 출렁임이 줄어 레벨 읽기가 안정되지만 구간당 시간이 늘고, 짧은 신호는 평균에 묻힙니다" +
+                                "(짧은 신호는 불요파 목록의 '프레임 최대'와 Max Hold로 남습니다). 전력 평균이라 로그 평균처럼 잡음이 2.5 dB 낮게 읽히지 않습니다.",
                                 fontSize = 11.sp, color = Dim)
                         }
                         3 -> {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Checkbox(chPower, { chPower = it }); Text("Channel Power 표시")
                             }
-                            Field("판정 임계 (dB)", threshold, { threshold = it })
-                            Text("장비 리버스: 1 MHz 블록이 중앙값 또는 저장한 기준보다 이 값 이상 높으면 '간섭 의심'.\n" +
+                            Field("표시 임계 (dB)", threshold, { threshold = it })
+                            Text("장비 리버스: 1 MHz 블록이 중앙값 또는 저장한 기준보다 이 값 이상 높으면 그 구간을 결과에 표시합니다(판정 아님).\n" +
                                 "불요파: 노이즈 플로어보다 이 값 이상 높은 피크를 목록에 올립니다.", fontSize = 11.sp, color = Dim)
                             Text("채널 전력은 녹색 채널 영역을 적분한 값이며 완료된 스윕 기준입니다(넓은 Span은 순차 측정 합산).",
                                 fontSize = 11.sp, color = Dim)
