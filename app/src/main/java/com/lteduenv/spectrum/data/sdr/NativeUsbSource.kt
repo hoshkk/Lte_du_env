@@ -20,6 +20,7 @@ interface SpectrumSource {
     fun close()
     fun frames(config:SweepConfig):Flow<SpectrumFrame>
 }
+private class UsbPermissionDenied : IllegalStateException("USB 사용 권한이 필요합니다 · 실측 시작을 눌러 다시 허용하세요")
 class NativeRtl {
     companion object { init { System.loadLibrary("spectrumusb") } }
     external fun open(fd:Int,path:String,agc:Boolean,gain:Int):Long
@@ -28,7 +29,7 @@ class NativeRtl {
     external fun read(handle:Long,data:ByteArray,length:Int):Int
     external fun close(handle:Long)
 }
-class NativeUsbSource(context:Context):SpectrumSource {
+class NativeUsbSource(context:Context,private val onStatus:(String)->Unit = {}):SpectrumSource {
     private val context=context.applicationContext
     private val stopped=AtomicBoolean(false)
     override fun close(){stopped.set(true)}
@@ -50,12 +51,19 @@ class NativeUsbSource(context:Context):SpectrumSource {
                     cleanup()
                     if(c.isActive) {
                         if(manager.hasPermission(device))c.resume(Unit)
-                        else c.resumeWithException(IllegalStateException("USB 사용 권한이 필요합니다"))
+                        else c.resumeWithException(UsbPermissionDenied())
                     }
                 }}
                 ContextCompat.registerReceiver(context,receiver,IntentFilter(action),ContextCompat.RECEIVER_NOT_EXPORTED)
                 c.invokeOnCancellation{cleanup()}
                 try {
+                    // Attach/default-app handling may have granted permission
+                    // since the initial check, while the receiver was installed.
+                    if(manager.hasPermission(device)) {
+                        cleanup()
+                        if(c.isActive)c.resume(Unit)
+                        return@suspendCancellableCoroutine
+                    }
                     val flags=PendingIntent.FLAG_UPDATE_CURRENT or if(Build.VERSION.SDK_INT>=31)PendingIntent.FLAG_MUTABLE else 0
                     manager.requestPermission(device,PendingIntent.getBroadcast(context,0,Intent(action).setPackage(context.packageName),flags))
                 }catch(e:Exception){cleanup();if(c.isActive)c.resumeWithException(e)}
@@ -99,13 +107,14 @@ class NativeUsbSource(context:Context):SpectrumSource {
                         var tuned:Int?=null
                         while(currentCoroutineContext().isActive && !stopped.get()) {
                             val started=System.currentTimeMillis();val monotonic=System.nanoTime()
-                            var clipped=0L;var samples=0L;val timing=LongArray(6)
+                            var clipped=0L;var samples=0L;val timing=LongArray(14)
                             for((index,seg) in plan.segments.withIndex()) {
                                 currentCoroutineContext().ensureActive()
                                 val hz=(seg.centerMhz*1e6).roundToInt()
                                 if(tuned!=hz) {
                                     val t=native.tune(handle,hz,if(tuned==null)maxOf(50,config.nativeSettleMs)else config.nativeSettleMs)
                                     for(i in 0..2)timing[i]+=t[i]
+                                    for(i in 3 until t.size)timing[i+3]+=t[i]
                                     val discardStart=System.nanoTime();reader.discard();timing[3]+=System.nanoTime()-discardStart;tuned=hz
                                 } else {
                                     // Single-window mode drops samples accumulated while DSP/UI ran.
@@ -135,9 +144,13 @@ class NativeUsbSource(context:Context):SpectrumSource {
                 } catch(e:CancellationException) {
                     throw e
                 } catch(e:Exception) {
+                    // Denial is a user decision, not a transient USB fault.
+                    // Do not reopen the system permission dialog in the retry loop.
+                    if(e is UsbPermissionDenied)throw e
                     if(stopped.get())throw CancellationException()
                     reconnectAttempt++
                     if(reconnectAttempt>MAX_RECONNECT_ATTEMPTS)throw e
+                    onStatus("USB 재연결 중 ($reconnectAttempt/$MAX_RECONNECT_ATTEMPTS) · 표시 파형은 이전 측정값 · ${e.message}")
                     delay(RECONNECT_BACKOFF_MS)
                 }
             }

@@ -253,6 +253,8 @@ static void shadow_store(struct r82xx_priv *priv, uint8_t reg, const uint8_t *va
 		len = NUM_REGS - r;
 
 	memcpy(&priv->regs[r], val, len);
+	for (int i = r; i < r + len; i++)
+		priv->pll_config_valid |= (uint32_t)1 << i;
 }
 
 static int r82xx_write(struct r82xx_priv *priv, uint8_t reg, const uint8_t *val,
@@ -276,6 +278,7 @@ static int r82xx_write(struct r82xx_priv *priv, uint8_t reg, const uint8_t *val,
 					 priv->buf, size + 1);
 
 		if (rc != size + 1) {
+			priv->pll_config_valid = 0;
 			fprintf(stderr, "%s: i2c wr failed=%d reg=%02x len=%d\n",
 				   __FUNCTION__, rc, reg, size);
 			if (rc < 0)
@@ -442,6 +445,25 @@ static int r82xx_set_mux(struct r82xx_priv *priv, uint32_t freq)
 	return rc;
 }
 
+/* Only explicit configuration fields are eligible: reference/mixer divider,
+ * SDM power and integer divider. Keep VCO current, autotune, fractional
+ * programming and lock reads
+ * on the original path. A shadow value is usable only after a successful
+ * hardware write; failed writes and initialization invalidate it. */
+static int r82xx_pll_config_write_mask(struct r82xx_priv *priv,
+		uint8_t reg, uint8_t val, uint8_t mask)
+{
+	int eligible = (reg == 0x10 && (mask == 0x10 || mask == 0xe0)) ||
+	               (priv->init_done && ((reg == 0x12 && mask == 0x08) ||
+	                                    (reg == 0x14 && mask == 0xff)));
+	if (eligible && (priv->pll_config_valid & ((uint32_t)1 << (reg - REG_SHADOW_START)))) {
+		int cached = r82xx_read_cache_reg(priv, reg);
+		if (cached >= 0 && (cached & mask) == (val & mask))
+			return 0;
+	}
+	return r82xx_write_reg_mask(priv, reg, val, mask);
+}
+
 static int r82xx_set_pll(struct r82xx_priv *priv, uint32_t freq)
 {
 	int rc, i;
@@ -466,7 +488,7 @@ static int r82xx_set_pll(struct r82xx_priv *priv, uint32_t freq)
 	pll_ref = priv->cfg->xtal;
 	pll_ref_khz = (priv->cfg->xtal + 500) / 1000;
 
-	rc = r82xx_write_reg_mask(priv, 0x10, refdiv2, 0x10);
+	rc = r82xx_pll_config_write_mask(priv, 0x10, refdiv2, 0x10);
 	if (rc < 0)
 		return rc;
 
@@ -508,7 +530,7 @@ static int r82xx_set_pll(struct r82xx_priv *priv, uint32_t freq)
 	else if (vco_fine_tune < vco_power_ref)
 		div_num = div_num + 1;
 
-	rc = r82xx_write_reg_mask(priv, 0x10, div_num << 5, 0xe0);
+	rc = r82xx_pll_config_write_mask(priv, 0x10, div_num << 5, 0xe0);
 	if (rc < 0)
 		return rc;
 
@@ -524,7 +546,7 @@ static int r82xx_set_pll(struct r82xx_priv *priv, uint32_t freq)
 	ni = (nint - 13) / 4;
 	si = nint - 4 * ni - 13;
 
-	rc = r82xx_write_reg(priv, 0x14, ni + (si << 6));
+	rc = r82xx_pll_config_write_mask(priv, 0x14, ni + (si << 6), 0xff);
 	if (rc < 0)
 		return rc;
 
@@ -534,7 +556,7 @@ static int r82xx_set_pll(struct r82xx_priv *priv, uint32_t freq)
 	else
 		val = 0x00;
 
-	rc = r82xx_write_reg_mask(priv, 0x12, val, 0x08);
+	rc = r82xx_pll_config_write_mask(priv, 0x12, val, 0x08);
 	if (rc < 0)
 		return rc;
 
@@ -1117,6 +1139,8 @@ int r82xx_set_bandwidth(struct r82xx_priv *priv, int bw, uint32_t rate)
 #undef FILT_HP_BW1
 #undef FILT_HP_BW2
 
+extern int64_t spectrum_clock_ns(void);
+extern void spectrum_profile_stage(int stage, int64_t started);
 int r82xx_set_freq(struct r82xx_priv *priv, uint32_t freq)
 {
 	int rc = -1;
@@ -1140,11 +1164,15 @@ int r82xx_set_freq(struct r82xx_priv *priv, uint32_t freq)
 
 	lo_freq = upconvert_freq + priv->int_freq;
 
+	int64_t profile_started = spectrum_clock_ns();
 	rc = r82xx_set_mux(priv, lo_freq);
+	spectrum_profile_stage(0, profile_started);
 	if (rc < 0)
 		goto err;
 
+	profile_started = spectrum_clock_ns();
 	rc = r82xx_set_pll(priv, lo_freq);
+	spectrum_profile_stage(1, profile_started);
 	if (rc < 0 || !priv->has_lock)
 		goto err;
 
@@ -1392,6 +1420,8 @@ static int r82xx_xtal_check(struct r82xx_priv *priv)
 int r82xx_init(struct r82xx_priv *priv)
 {
 	int rc;
+	priv->pll_config_valid = 0;
+	priv->init_done = 0;
 
 	/* TODO: R828D might need r82xx_xtal_check() */
 	priv->xtal_cap_sel = XTAL_HIGH_CAP_0P;
@@ -1399,6 +1429,8 @@ int r82xx_init(struct r82xx_priv *priv)
 	/* Initialize registers */
 	rc = r82xx_write(priv, 0x05,
 			 r82xx_init_array, sizeof(r82xx_init_array));
+	if (rc < 0)
+		goto err;
 
 	rc = r82xx_set_tv_standard(priv, 3, TUNER_DIGITAL_TV, 0);
 	if (rc < 0)

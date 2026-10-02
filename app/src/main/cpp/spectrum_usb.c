@@ -4,6 +4,8 @@
 #include <unistd.h>
 #include <time.h>
 #include <stdio.h>
+#include <errno.h>
+#include "settle_deadline.h"
 #include <android/log.h>
 #include "reset_retry.h"
 #include "rtl-sdr.h"
@@ -34,20 +36,33 @@ JNIEXPORT jlong JNICALL Java_com_lteduenv_spectrum_data_sdr_NativeRtl_open(JNIEn
  }
  return (jlong)(intptr_t)d;
 }
+extern void spectrum_profile_begin(void);
+extern void spectrum_profile_end(int64_t *out);
+extern int64_t spectrum_profile_last_write(void);
 static jlong clock_ns(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (jlong)t.tv_sec*1000000000LL+t.tv_nsec;}
 JNIEXPORT jlongArray JNICALL Java_com_lteduenv_spectrum_data_sdr_NativeRtl_tune(JNIEnv *e,jobject o,jlong h,jint hz,jint settle){
  rtlsdr_dev_t *d=(rtlsdr_dev_t*)(intptr_t)h;
  if(!d || settle<0 || settle>1000){fail(e,"잘못된 USB 주파수 설정");return NULL;}
  jlong t0=clock_ns();
- if(rtlsdr_set_center_freq(d,(uint32_t)hz)<0){fail(e,"주파수 동조 실패 / PLL 잠금 확인 실패");return NULL;}
+ spectrum_profile_begin();
+ int tune_rc=rtlsdr_set_center_freq(d,(uint32_t)hz);
+ int64_t stats[8]; spectrum_profile_end(stats);
+ if(tune_rc<0){fail(e,"주파수 동조 실패 / PLL 잠금 확인 실패");return NULL;}
  jlong t1=clock_ns();
- struct timespec ts={settle/1000,(settle%1000)*1000000L};nanosleep(&ts,0);
+ int64_t deadline=spectrum_settle_deadline(t0,t1,spectrum_profile_last_write(),settle);
+ while(clock_ns()<deadline) {
+   int64_t remaining=deadline-clock_ns();
+   if(remaining<=0)break;
+   struct timespec ts={remaining/1000000000LL,remaining%1000000000LL};
+   if(nanosleep(&ts,0)<0 && errno!=EINTR){fail(e,"USB 안정화 대기 실패");return NULL;}
+ }
  jlong t2=clock_ns();
  /* No async transfers or host sample queues exist in this backend. Flush after settling. */
  if(!reset_checked(e,d))return NULL;
- jlong v[3]={t1-t0,t2-t1,clock_ns()-t2};
- jlongArray result=(*e)->NewLongArray(e,3);
- if(result)(*e)->SetLongArrayRegion(e,result,0,3,v);
+ jlong v[11]={t1-t0,t2-t1,clock_ns()-t2};
+ for(int i=0;i<8;i++)v[3+i]=stats[i];
+ jlongArray result=(*e)->NewLongArray(e,11);
+ if(result)(*e)->SetLongArrayRegion(e,result,0,11,v);
  return result;
 }
 JNIEXPORT jint JNICALL Java_com_lteduenv_spectrum_data_sdr_NativeRtl_read(JNIEnv *e,jobject o,jlong h,jbyteArray a,jint n){

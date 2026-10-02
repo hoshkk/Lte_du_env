@@ -83,7 +83,7 @@ fun SpectrumApp(vm:SpectrumViewModel=viewModel()) {
     fun loadProfile(mode:FieldMode) {
         runCatching {
             val profile=FieldProfiles.initial(mode,s.config)
-            if(vm.applyProfile(profile,mode))feedback("${mode.title} 설정 적용")
+            if(vm.applyProfile(profile,mode)){startLive();feedback("${mode.title} 자동 조정")}
         }.onFailure{vm.error("저장 설정을 불러올 수 없습니다. 빠른 설정 관리에서 초기화하세요.")}
     }
     val frame=s.shownFrame
@@ -105,10 +105,12 @@ fun SpectrumApp(vm:SpectrumViewModel=viewModel()) {
         }
         Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
             FieldMode.values().forEach{mode->SelectionButton(mode.title,s.selectedMode==mode,enabled=!opening,onClick={loadProfile(mode)})}
+            OutlinedButton(enabled=!opening,onClick={loadProfile(s.selectedMode?:FieldMode.ANTENNA)}){Text("자동 맞춤")}
             TextButton(enabled=!opening,onClick={vm.stop();profileDialog=true}){Text("빠른 설정 저장/관리")}
             SelectionButton("USB 직접",directUsb,enabled=!s.running && !opening,onClick={directUsb=true;backendPrefs.edit().putBoolean("direct",true).apply()})
             SelectionButton("SDR Driver",!directUsb,enabled=!s.running && !opening,onClick={directUsb=false;backendPrefs.edit().putBoolean("direct",false).apply()})
         }
+        Text(if(s.autoSetupStatus.isBlank())"자동 맞춤: 대기 · 버튼을 누르면 초기 조정" else s.autoSetupStatus,fontSize=11.sp)
         Text("Ref ${s.config.refLevelDb.fmt(1)} · Offset ${s.config.refLevelOffsetDb.fmt(1)} dB · ${s.config.dbPerDiv.fmt(1)} dB/div · RBW 목표 ${s.config.rbwKhz.fmt(2)} kHz · VBW ${if(s.config.vbwKhz==0.0)"OFF" else "${s.config.vbwKhz.fmt(2)} kHz (SW)"}",fontSize=11.sp,maxLines=1)
         Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(5.dp)) {
             s.markers.forEach{m->FilterChip(selected=m.index==s.selectedMarker,onClick={vm.selectMarker(m.index)},label={Text(if(m.enabled)"M${m.index} ${m.levelDb.toDouble().fmt(1)}" else "M${m.index}",fontSize=11.sp)})}
@@ -127,6 +129,10 @@ fun SpectrumApp(vm:SpectrumViewModel=viewModel()) {
             "${frame.source} · ${frame.displayUnit} · ${frame.startMhz.fmt(3)}–${frame.stopMhz.fmt(3)} MHz · RBW 적용 ${(frame.rbwHz/1000).fmt(3)} kHz · ENBW ${(frame.enbwHz/1000).fmt(3)} kHz · ${frame.pointCount}점 / ${frame.completedSegments}/${frame.segmentCount}구간 · 전체 ${frame.lastSweepMs} ms · ${if(frame.autoGain)"AGC" else "Gain ${frame.gainStep}/10"}",fontSize=10.sp,maxLines=2)
         frame?.timingNs?.let { t ->
             Text("완료 스윕: 동조 ${t[0]/1_000_000} · 대기 ${t[1]/1_000_000} · 초기화 ${t[2]/1_000_000} · 폐기 ${t[3]/1_000_000} · 수신 ${t[4]/1_000_000} · 연산 ${t[5]/1_000_000} ms",fontSize=10.sp,maxLines=2)
+        }
+        frame?.timingNs?.takeIf { it.size >= 14 }?.let { t ->
+            Text("동조 내부: RF 설정 ${t[6]/1_000_000} · PLL ${t[7]/1_000_000} ms",fontSize=10.sp)
+            Text("동조 USB: 쓰기 ${t[8]/1_000_000} ms/${t[11]}회 · 읽기 ${t[9]/1_000_000} ms/${t[12]}회 · 기타 ${t[10]/1_000_000} ms/${t[13]}회",fontSize=10.sp,maxLines=2)
         }
         if(s.message.isNotBlank())Text(s.message,color=AnalyzerColors.TextPrimary,fontSize=11.sp,maxLines=1)
     }

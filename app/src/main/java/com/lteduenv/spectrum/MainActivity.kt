@@ -11,6 +11,12 @@ import com.lteduenv.spectrum.ui.SpectrumApp
 import com.lteduenv.spectrum.ui.SpectrumCheckTheme
 
 class MainActivity : ComponentActivity() {
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        // USB attach delivers the system grant to the existing activity.
+        // Keep its ViewModel and ongoing reconnect/measurement session intact.
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

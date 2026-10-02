@@ -12,7 +12,7 @@ prefix='''
 #define REG_SHADOW_START 5
 #define NUM_REGS 27
 struct config { int max_i2c_msg_len; int i2c_addr; };
-struct r82xx_priv { uint8_t regs[NUM_REGS];uint8_t buf[64];void *rtl_dev;struct config *cfg; };
+struct r82xx_priv { uint8_t regs[NUM_REGS];uint32_t pll_config_valid;uint8_t buf[64];void *rtl_dev;struct config *cfg; };
 static int writes=0,fail_next=0;
 static int rtlsdr_i2c_write_fn(void *dev,int addr,uint8_t *buf,int n){ writes++;if(fail_next){fail_next=0;return -1;}return n; }
 '''

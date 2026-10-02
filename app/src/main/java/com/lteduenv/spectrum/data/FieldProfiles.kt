@@ -11,7 +11,7 @@ object FieldProfiles {
     fun initial(mode:FieldMode,current:SweepConfig):FieldProfile {
         val equipment=mode==FieldMode.EQUIPMENT
         return FieldProfile(current.copy(
-            refLevelDb=-20.0,refLevelOffsetDb=0.0,dbPerDiv=10.0,
+            refLevelDb=-20.0,refLevelOffsetDb=current.refLevelOffsetDb,dbPerDiv=10.0,
             manualGainLevel=if(equipment)1 else 4,autoGain=false,removeDc=false,
             tuneSettleMs=80,nativeSettleMs=10,
             rbwKhz=if(equipment)100.0 else 10.0,vbwKhz=0.0,

@@ -76,6 +76,7 @@ struct r82xx_priv {
 	struct r82xx_config		*cfg;
 
 	uint8_t				regs[NUM_REGS];
+	uint32_t                        pll_config_valid;
 	uint8_t				buf[NUM_REGS + 1];
 	enum r82xx_xtal_cap_value	xtal_cap_sel;
 	uint16_t			pll;	/* kHz */

@@ -406,6 +406,47 @@ enum blocks {
 	IICB			= 6,
 };
 
+
+/* Thread-local: profiling is enabled only inside a synchronous tune call.
+ * [mux ns, pll ns, I2C write ns, I2C read ns, other control ns, counts x3].
+ * USB durations overlap mux/PLL durations; do not add both breakdowns. */
+#include <time.h>
+static __thread int spectrum_profiling;
+static __thread int64_t spectrum_stats[8];
+static __thread int64_t spectrum_last_write;
+int64_t spectrum_profile_last_write(void) { return spectrum_last_write; }
+int64_t spectrum_clock_ns(void) {
+    struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
+    return (int64_t)t.tv_sec * 1000000000LL + t.tv_nsec;
+}
+void spectrum_profile_begin(void) {
+    spectrum_last_write = 0;
+    memset(spectrum_stats, 0, sizeof(spectrum_stats)); spectrum_profiling = 1;
+}
+void spectrum_profile_end(int64_t *out) {
+    spectrum_profiling = 0; memcpy(out, spectrum_stats, sizeof(spectrum_stats));
+}
+void spectrum_profile_stage(int stage, int64_t started) {
+    if(spectrum_profiling && stage >= 0 && stage < 2)
+        spectrum_stats[stage] += spectrum_clock_ns() - started;
+}
+extern int spectrum_usb_control(libusb_device_handle*,uint8_t,uint8_t,uint16_t,uint16_t,unsigned char*,uint16_t,unsigned int);
+static int spectrum_control_transfer(libusb_device_handle *h, uint8_t type,
+    uint8_t request, uint16_t value, uint16_t index, unsigned char *data,
+    uint16_t length, unsigned int timeout) {
+    if(!spectrum_profiling)
+        return libusb_control_transfer(h,type,request,value,index,data,length,timeout);
+    int group = (index >> 8) == IICB ? ((type & 0x80) ? 1 : 0) : 2;
+    int64_t started = spectrum_clock_ns();
+    int rc = spectrum_usb_control(h,type,request,value,index,data,length,timeout);
+    int64_t finished = spectrum_clock_ns();
+    if (!(type & 0x80)) spectrum_last_write = rc == length ? finished : 0;
+    spectrum_stats[2+group] += finished - started;
+    spectrum_stats[5+group]++;
+    return rc;
+}
+#define libusb_control_transfer spectrum_control_transfer
+
 int rtlsdr_read_array(rtlsdr_dev_t *dev, uint8_t block, uint16_t addr, uint8_t *array, uint8_t len)
 {
 	int r;

@@ -1414,6 +1414,32 @@ static libusb_device* op_device2(struct libusb_context *ctx, const char *dev_nod
 	return dev;
 }
 
+/* Serialized synchronous control path for Spectrum's tune worker.
+ * Preserve request payload/order/timeout; avoid async URB event-loop handoff. */
+int spectrum_usb_control(libusb_device_handle *handle, uint8_t type,
+ uint8_t request, uint16_t value, uint16_t index, unsigned char *data,
+ uint16_t length, unsigned int timeout)
+{
+ struct linux_device_handle_priv *hpriv = _device_handle_priv(handle);
+ struct usbfs_ctrltransfer ctrl = {0};
+ ctrl.bmRequestType=type; ctrl.bRequest=request; ctrl.wValue=value;
+ ctrl.wIndex=index; ctrl.wLength=length; ctrl.timeout=timeout; ctrl.data=data;
+ int rc=ioctl(hpriv->fd,IOCTL_USBFS_CONTROL,&ctrl);
+ if(rc>=0)return rc;
+ switch(errno) {
+ case ENODEV: case ENOENT: return LIBUSB_ERROR_NO_DEVICE;
+ case ETIMEDOUT: return LIBUSB_ERROR_TIMEOUT;
+ case EPIPE: return LIBUSB_ERROR_PIPE;
+ case EINTR: return LIBUSB_ERROR_INTERRUPTED;
+ case EACCES: return LIBUSB_ERROR_ACCESS;
+ case EBUSY: return LIBUSB_ERROR_BUSY;
+ case EINVAL: return LIBUSB_ERROR_INVALID_PARAM;
+ case ENOTTY: case ENOSYS:
+  return libusb_control_transfer(handle,type,request,value,index,data,length,timeout);
+ default:return LIBUSB_ERROR_IO;
+ }
+}
+
 static void op_close(struct libusb_device_handle *dev_handle)
 {
 	struct linux_device_handle_priv *hpriv = _device_handle_priv(dev_handle);
