@@ -22,8 +22,14 @@ class SimReceiver(
     override val sampleRate: Int = 2_400_000,
     private val tuneDelayMs: Long = 0,
     seed: Long = 1,
+    /** Constant I/Q offset added to every sample, like a receiver's DC residue (linear, full scale = 1). */
+    private val dcOffset: Double = 0.0,
 ) : Receiver {
-    data class Signal(val freqHz: Double, val powerDb: Double, val bwHz: Double = 0.0)
+    /**
+     * [onFraction] < 1 makes a CW tone a burst: present only in the first part
+     * of each capture (shorter than the averaging time).
+     */
+    data class Signal(val freqHz: Double, val powerDb: Double, val bwHz: Double = 0.0, val onFraction: Double = 1.0)
 
     private val rnd = Random(seed)
     private var center = 0L
@@ -70,12 +76,14 @@ class SimReceiver(
             if (abs(off) >= fs / 2) continue
             val amp = sqrt(10.0.pow(s.powerDb / 10))
             val w = 2 * PI * off / fs
-            for (i in 0 until total) {
+            val on = (total * s.onFraction).toInt().coerceIn(0, total)
+            for (i in 0 until on) {
                 val ph = w * (i + t0)
                 out[2 * i] += (amp * cos(ph)).toFloat()
                 out[2 * i + 1] += (amp * sin(ph)).toFloat()
             }
         }
+        if (dcOffset != 0.0) for (i in out.indices) out[i] += dcOffset.toFloat()
         var clipped = 0
         for (i in out.indices) {
             if (out[i] <= -0.996f || out[i] >= 0.992f) clipped++

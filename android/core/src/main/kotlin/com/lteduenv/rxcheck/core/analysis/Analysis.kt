@@ -12,49 +12,97 @@ private fun db(x: Double) = 10 * log10(max(x, 1e-30))
 
 data class ChannelPower(val totalDb: Double, val psdDbPerMhz: Double, val bwHz: Double)
 
+/**
+ * One block of the channel. Values are null when the block has unmeasured bins
+ * (they are never filled in or computed from the remaining bins).
+ */
 data class Block(
     val startHz: Double,
     val stopHz: Double,
-    val psdDbPerMhz: Double,
-    /** Versus the median block of this measurement. */
-    val aboveMedianDb: Double,
-    /** Versus the saved baseline, if any. */
+    val psdDbPerMhz: Double?,
+    /** Versus the median of the measured blocks of this sweep. */
+    val aboveMedianDb: Double?,
+    /** Versus the saved baseline; null without a baseline or if either side is unmeasured. */
     val riseDb: Double?,
-)
-
-/** Where a detected emission most likely comes from. */
-enum class Origin(val label: String) {
-    EXTERNAL("외부 신호"),
-    /** At a harmonic of the dongle's 28.8 MHz reference crystal. */
-    DONGLE_XTAL("동글 자체 (28.8 MHz 배수)"),
-    /** Also present in the no-input recording of this dongle. */
-    DONGLE_RECORDED("동글 자체 (무입력 기록)"),
+    /** Unmeasured bins in this block (this sweep). */
+    val missingBins: Int = 0,
+    /** Unmeasured bins in this block of the baseline. */
+    val baselineMissingBins: Int = 0,
+) {
+    val measured get() = psdDbPerMhz != null
 }
 
+/** Which trace a peak was found on. */
+enum class PeakSource(val label: String) {
+    CURRENT("이번 스윕"),
+    /** Only in the Max Hold trace (seen in an earlier sweep). */
+    HOLD("Max Hold"),
+    /** Only in the per-frame maximum: shorter than the averaging time. */
+    FRAME_PEAK("짧은 신호(프레임 최대)"),
+}
+
+/**
+ * A level standing above the floor. The flags are hints for the user, never a
+ * reason to drop the peak: a real signal can sit on any of these frequencies.
+ */
 data class Peak(
     val freqHz: Double,
     val levelDb: Double,
     val aboveFloorDb: Double,
     val bw10dBHz: Double,
     val inChannel: Boolean,
-    val origin: Origin = Origin.EXTERNAL,
-    /** In how many of the recent sweeps this peak was seen. */
+    /** Near a harmonic of the dongle's 28.8 MHz crystal: may be internal. */
+    val xtalHarmonic: Boolean = false,
+    /** A peak at this frequency is also in the no-input recording: may be internal. */
+    val inNoInputRecord: Boolean = false,
+    /** On a segment's DC bin: may be DC/LO residue; recheck with the centres moved. */
+    val atDc: Boolean = false,
+    /** In how many of the recent sweeps (incl. this one) a peak was at this frequency. */
     val seenSweeps: Int = 1,
-)
+    val source: PeakSource = PeakSource.CURRENT,
+) {
+    val hints: List<String> get() = listOfNotNull(
+        if (xtalHarmonic) "28.8 MHz 배수 · 내부 신호 가능성" else null,
+        if (inNoInputRecord) "무입력 기록에도 있음" else null,
+        if (atDc) "DC 위치 · 중심 이동 재확인" else null,
+    )
+}
 
 object Analysis {
-    /** Integrated power over [centerHz ± bwHz/2], with partial bins weighted. */
+    /** Whether [lo, hi] lies inside the swept range. */
+    fun covers(t: Trace, lo: Double, hi: Double): Boolean {
+        val bin = t.plan.binHz
+        return lo >= t.freqAt(0) - bin / 2 && hi <= t.freqAt(t.points - 1) + bin / 2
+    }
+
+    /** Unmeasured (non-finite) bins overlapping [lo, hi]. */
+    fun missingBins(t: Trace, lo: Double, hi: Double): Int {
+        val bin = t.plan.binHz
+        var n = 0
+        for (i in 0 until t.points) {
+            val f = t.freqAt(i)
+            if (min(hi, f + bin / 2) - max(lo, f - bin / 2) > 0 && !t.levelsDb[i].isFinite()) n++
+        }
+        return n
+    }
+
+    /**
+     * Integrated power over [centerHz ± bwHz/2], with partial bins weighted.
+     * Null if the range is not fully swept or any bin in it is unmeasured: a
+     * partial sum would read low and look like a valid channel power.
+     */
     fun channelPower(t: Trace, centerHz: Double, bwHz: Double, offsetDb: Double = 0.0): ChannelPower? {
         val lo = centerHz - bwHz / 2; val hi = centerHz + bwHz / 2
         val bin = t.plan.binHz
-        if (lo < t.freqAt(0) - bin / 2 || hi > t.freqAt(t.points - 1) + bin / 2) return null
+        if (!covers(t, lo, hi)) return null
         var sum = 0.0
         for (i in 0 until t.points) {
-            val v = t.levelsDb[i]
-            if (!v.isFinite()) continue
             val f = t.freqAt(i)
             val w = min(hi, f + bin / 2) - max(lo, f - bin / 2)
-            if (w > 0) sum += lin(v) * w / t.enbwHz
+            if (w <= 0) continue
+            val v = t.levelsDb[i]
+            if (!v.isFinite()) return null
+            sum += lin(v) * w / t.enbwHz
         }
         if (sum <= 0) return null
         val total = db(sum) + offsetDb
@@ -84,18 +132,20 @@ object Analysis {
         val count = max(1, (bwHz / blockHz).toInt())
         val width = bwHz / count
         val start = centerHz - bwHz / 2
+        if (!covers(t, start, start + bwHz)) return emptyList()
         val psd = (0 until count).map { k ->
             val c = start + (k + 0.5) * width
             channelPower(t, c, width, offsetDb)?.psdDbPerMhz
         }
         val valid = psd.filterNotNull().sorted()
-        if (valid.isEmpty()) return emptyList()
-        val median = valid[valid.size / 2]
-        return psd.mapIndexedNotNull { k, p ->
-            if (p == null) return@mapIndexedNotNull null
-            val c = start + (k + 0.5) * width
-            val rise = baseline?.let { b -> channelPower(b, c, width, offsetDb)?.psdDbPerMhz?.let { p - it } }
-            Block(start + k * width, start + (k + 1) * width, p, p - median, rise)
+        val median = if (valid.isEmpty()) null else valid[valid.size / 2]
+        val base = baseline?.takeIf { it.plan.sameGrid(t.plan) }
+        return psd.mapIndexed { k, p ->
+            val a = start + k * width; val b = a + width; val c = (a + b) / 2
+            val baseP = base?.let { channelPower(it, c, width, offsetDb)?.psdDbPerMhz }
+            Block(a, b, p, if (p != null && median != null) p - median else null,
+                if (p != null && baseP != null) p - baseP else null,
+                missingBins(t, a, b), base?.let { missingBins(it, a, b) } ?: 0)
         }
     }
 
@@ -147,8 +197,9 @@ object Analysis {
 
     /**
      * Copy of [t] with the bins within [halfWidthHz] of each frequency replaced by
-     * the median of the bins just outside, so a known internal spur does not
-     * inflate channel or block power.
+     * the median of the bins just outside. A correction the user must ask for:
+     * it also removes any real signal on those frequencies. Unmeasured bins stay
+     * unmeasured.
      */
     fun maskBins(t: Trace, freqsHz: List<Double>, halfWidthHz: Double): Trace {
         if (freqsHz.isEmpty()) return t
@@ -161,9 +212,9 @@ object Analysis {
             val ref = ring.filter { it in 0 until t.points && t.levelsDb[it].isFinite() }.map { t.levelsDb[it] }.sorted()
             if (ref.isEmpty()) continue
             val m = ref[ref.size / 2]
-            for (i in (c - half)..(c + half)) if (i in 0 until t.points) v[i] = m
+            for (i in (c - half)..(c + half)) if (i in 0 until t.points && v[i].isFinite()) v[i] = m
         }
-        return Trace(t.plan, v, t.enbwHz, t.completedSegments, t.unlockedSegments, t.timing, t.timestampMs, t.clippedFraction)
+        return t.withLevels(v)
     }
 
     /** Level at a frequency (nearest bin), dB incl. offset; null outside the trace. */
@@ -188,7 +239,6 @@ object Analysis {
             val a = prev.levelsDb[it]; val b = cur.levelsDb[it]
             when { !a.isFinite() -> b; !b.isFinite() -> a; else -> max(a, b) }
         }
-        return Trace(cur.plan, v, cur.enbwHz, cur.completedSegments, cur.unlockedSegments, cur.timing, cur.timestampMs,
-            maxOf(prev.clippedFraction, cur.clippedFraction))
+        return cur.withLevels(v, null, maxOf(prev.clippedFraction, cur.clippedFraction))
     }
 }

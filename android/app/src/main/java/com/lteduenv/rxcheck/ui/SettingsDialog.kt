@@ -58,6 +58,9 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
     var settle by remember { mutableStateOf(current.settleMs.toString()) }
     var chPower by remember { mutableStateOf(current.channelPower) }
     var dc by remember { mutableStateOf(current.dcPatch) }
+    var iqMean by remember { mutableStateOf(current.iqMeanRemoval) }
+    var dcShift by remember { mutableStateOf(current.dcShift) }
+    var correction by remember { mutableStateOf(current.internalCorrection) }
     var error by remember { mutableStateOf<String?>(null) }
 
     fun build(): Settings? {
@@ -71,6 +74,7 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
             offsetDb = v[4], thresholdDb = v[5], refLevelDb = v[6], dbPerDiv = v[7],
             gainStep = if (agc) null else gain.roundToInt(), fastTune = fast, narrowIf = narrowIf,
             settleMs = st, channelPower = chPower, dcPatch = dc,
+            iqMeanRemoval = iqMean, dcShift = dcShift, internalCorrection = correction,
         )
     }
 
@@ -188,7 +192,17 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
                             }
                             Text("0: PLL 잠금 확인 후 바로 수집(가장 빠름). 구간 경계에서 레벨이 튀면 2~10 ms로 늘려 비교하세요(기존 앱은 10 ms).",
                                 fontSize = 11.sp, color = Dim)
-                            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(dc, { dc = it }); Text("구간 중심 3 bin 보간") }
+                            Text("DC 처리 (기본: 모두 끔 = 원본 스펙트럼)", fontSize = 13.sp)
+                            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(iqMean, { iqMean = it }); Text("I/Q 평균 제거") }
+                            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(dc, { dc = it }); Text("구간 중심 3 bin 보간 (보정)") }
+                            Text("두 처리 모두 각 구간 중심 주파수에 정확히 겹친 실제 신호도 지웁니다. 켜면 결과에 '적용'으로 표시됩니다.",
+                                fontSize = 11.sp, color = Dim)
+                            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(dcShift, { dcShift = it }); Text("중심 이동 (DC 위치 재확인)") }
+                            Text("구간 중심을 약 반 구간 옮겨 측정합니다. 'DC 위치' 피크가 그대로 남으면 실제 신호, 사라지면 수신기 DC입니다.",
+                                fontSize = 11.sp, color = Dim)
+                            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(correction, { correction = it }); Text("동글 신호 보정값 함께 표시") }
+                            Text("28.8 MHz 배수·무입력 기록 위치를 주변값으로 바꾼 채널 전력을 '보정값'으로 따로 보여줍니다. 원본 값은 그대로입니다.",
+                                fontSize = 11.sp, color = Dim)
                         }
                     }
                 }

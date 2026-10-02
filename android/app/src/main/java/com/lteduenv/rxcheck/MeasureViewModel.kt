@@ -169,7 +169,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 rx.settleMs = s.settleMs
             }
-            val p = SweepPlan.create(s.centerMhz * 1e6, s.spanMhz * 1e6, s.rbwKhz * 1e3, rx.sampleRate)
+            val p = SweepPlan.create(s.centerMhz * 1e6, s.spanMhz * 1e6, s.rbwKhz * 1e3, rx.sampleRate, s.dcShift)
             if (p != plan || baselineKeyChanged(applied, s)) {
                 if (p != plan) _state.update { it.copy(live = null, last = null, hold = null, results = null) }
                 plan = p
@@ -180,13 +180,12 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
             }
             applied = s
             val prev = _state.value.last
-            val trace = engine.sweep(p, s.averages, s.dcPatch, onSegment = { part ->
+            val trace = engine.sweep(p, s.averages, s.dcPatch, s.iqMeanRemoval, onSegment = { part ->
                 val upto = part.plan.segments[part.completedSegments - 1].let { it.firstPoint + it.count }
                 val merged = if (prev != null && prev.plan == part.plan) {
                     val v = prev.levelsDb.copyOf()
                     System.arraycopy(part.levelsDb, 0, v, 0, upto)
-                    Trace(part.plan, v, part.enbwHz, part.completedSegments, part.unlockedSegments, null,
-                        part.timestampMs, part.clippedFraction)
+                    part.withLevels(v)
                 } else part
                 _state.update { it.copy(live = merged, livePoints = upto) }
             }, isActive = { ctx.isActive }) ?: return LoopEnd.STOPPED
@@ -202,7 +201,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
                     results = results, timing = trace.timing, sweeps = it.sweeps + 1, clipped = trace.clipped,
                     status = when {
                         trace.clipped -> "입력 클리핑 감지 · 이득을 낮추거나 감쇠기를 사용하세요"
-                        trace.unlockedSegments > 0 -> "PLL 미잠금 구간 ${trace.unlockedSegments}개 (해당 구간 제외)"
+                        trace.unlockedSegments > 0 -> "PLL 잠금 실패 ${trace.unlockedSegments}구간 · 해당 구간 미측정"
                         else -> "측정 중"
                     })
             }
@@ -243,7 +242,8 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
         maxHold = false, channelPower = false, band = null, mode = Mode.REVERSE)
 
     private fun baselineKeyChanged(a: Settings?, b: Settings) =
-        a == null || a.gainStep != b.gainStep || a.narrowIf != b.narrowIf || a.dcPatch != b.dcPatch
+        a == null || a.gainStep != b.gainStep || a.narrowIf != b.narrowIf || a.dcPatch != b.dcPatch ||
+            a.iqMeanRemoval != b.iqMeanRemoval
 
     /** Double tap on the graph: fit Ref and dB/div to what is on screen. Gain is not touched. */
     fun autoScale() {
@@ -280,7 +280,8 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
         _state.update {
             val old = it.settings
             val levelsChanged = clearTraces || old.gainStep != settings.gainStep || old.narrowIf != settings.narrowIf ||
-                old.dcPatch != settings.dcPatch || old.maxHold != settings.maxHold
+                old.dcPatch != settings.dcPatch || old.iqMeanRemoval != settings.iqMeanRemoval ||
+                old.maxHold != settings.maxHold
             it.copy(settings = settings, hold = if (levelsChanged) null else it.hold,
                 results = if (old.mode != settings.mode) null else it.results)
         }
@@ -330,6 +331,12 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
 
     fun resetHold() = _state.update { it.copy(hold = null) }
 
+    /** Moves the segment centres (and back) to tell DC residue from a real signal at a DC bin. */
+    fun toggleDcShift() {
+        val s = _state.value.settings
+        commit(s.copy(dcShift = !s.dcShift), clearTraces = false)
+    }
+
     // ---- markers -------------------------------------------------------------------
 
     fun selectMarker(index: Int) = _state.update { it.copy(selectedMarker = index) }
@@ -372,6 +379,10 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
             _state.update { it.copy(status = "클리핑된 스윕은 기준으로 저장할 수 없습니다") }
             return
         }
+        if (!t.complete || t.unlockedSegments > 0) {
+            _state.update { it.copy(status = "미측정 구간이 있는 스윕은 기준으로 저장할 수 없습니다") }
+            return
+        }
         store.saveBaseline(t, st.settings)
         _state.update { it.copy(baseline = t, baselineTime = System.currentTimeMillis(), status = "기준 저장됨") }
     }
@@ -390,8 +401,12 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
     fun recordInternal() {
         val st = _state.value
         val t = st.last ?: run { _state.update { it.copy(status = "완료된 스윕이 없습니다") }; return }
+        if (t.clipped || !t.complete || t.unlockedSegments > 0) {
+            _state.update { it.copy(status = "클리핑·미측정 구간이 있는 스윕은 기록할 수 없습니다") }
+            return
+        }
         store.saveInternal(t, st.settings)
-        _state.update { it.copy(internal = t, status = "동글 자체 신호 기록됨 (같은 Span·RBW·이득에서 적용)") }
+        _state.update { it.copy(internal = t, status = "무입력 기록 저장됨 (같은 Span·RBW·이득에서 피크에 표시만, 제외 안 함)") }
     }
 
     fun clearInternal() {
@@ -423,24 +438,45 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
                 "fast_tune=${s.fastTune}; settle_ms=${s.settleMs}; offset_db=${s.offsetDb}; clipping=${fmt("%.5f", t.clippedFraction)}; " +
                 "sweep_ms=${t.timing?.totalMs ?: ""}; device=${st.device ?: ""}; unit=dBFS+offset (상대값)\n")
             st.results?.let { r ->
-                append("# verdict=${r.verdict.title}; reasons=${r.verdict.reasons.joinToString(" | ")}\n")
-                r.channel?.let { append("# channel_power_db=${fmt("%.2f", it.totalDb)}; psd_db_per_mhz=${fmt("%.2f", it.psdDbPerMhz)}\n") }
-                r.riseDb?.let { append("# rise_vs_baseline_db=${fmt("%.2f", it)}\n") }
-                for (b in r.blocks) append("# block ${fmt("%.3f", b.startHz / 1e6)}-${fmt("%.3f", b.stopHz / 1e6)} MHz psd=${fmt("%.2f", b.psdDbPerMhz)} above_median=${fmt("%.2f", b.aboveMedianDb)}" +
-                    (b.riseDb?.let { " rise=${fmt("%.2f", it)}" } ?: "") + "\n")
-                for (p in r.peaks) append("# peak ${fmt("%.4f", p.freqHz / 1e6)} MHz level=${fmt("%.2f", p.levelDb)} above_floor=${fmt("%.2f", p.aboveFloorDb)} bw10=${fmt("%.0f", p.bw10dBHz)} in_channel=${p.inChannel} origin=${p.origin.name} seen=${p.seenSweeps}\n")
+                append("# status=${r.status.validity.name}; title=${r.status.title}; notes=${r.status.notes.joinToString(" | ")}\n")
+                append("# processing; iq_mean_removal=${t.meanRemoved}; dc_patch=${t.dcPatched}; dc_shift=${s.dcShift}; " +
+                    "unlocked_segments=${t.unlockedSegments}; unmeasured_points=${t.missingPoints}\n")
+                val ch = r.channel
+                if (ch != null) append("# channel_power_db=${fmt("%.2f", ch.totalDb)}; psd_db_per_mhz=${fmt("%.2f", ch.psdDbPerMhz)}\n")
+                else append("# channel_power_db=UNMEASURED; reason=${r.channelNote ?: ""}\n")
+                r.correctedChannel?.let { append("# channel_power_corrected_db=${fmt("%.2f", it.totalDb)} (internal-spur bins replaced; not raw)\n") }
+                append("# rise_vs_baseline_db=${r.riseDb?.let { fmt("%.2f", it) } ?: if (st.baseline != null) "UNMEASURED" else "NO_BASELINE"}\n")
+                r.correctedRiseDb?.let { append("# rise_vs_baseline_corrected_db=${fmt("%.2f", it)}\n") }
+                fun v(x: Double?) = x?.let { fmt("%.2f", it) } ?: "UNMEASURED"
+                for (b in r.blocks) append("# block ${fmt("%.3f", b.startHz / 1e6)}-${fmt("%.3f", b.stopHz / 1e6)} MHz psd=${v(b.psdDbPerMhz)} " +
+                    "above_median=${v(b.aboveMedianDb)} rise=${b.riseDb?.let { fmt("%.2f", it) } ?: if (st.baseline != null) "UNMEASURED" else "-"} " +
+                    "missing_bins=${b.missingBins} baseline_missing_bins=${b.baselineMissingBins}\n")
+                for (p in r.peaks) append("# peak ${fmt("%.4f", p.freqHz / 1e6)} MHz level=${fmt("%.2f", p.levelDb)} above_floor=${fmt("%.2f", p.aboveFloorDb)} " +
+                    "bw10=${fmt("%.0f", p.bw10dBHz)} in_channel=${p.inChannel} source=${p.source.name} seen_sweeps=${p.seenSweeps} " +
+                    "xtal_harmonic=${p.xtalHarmonic} in_no_input_record=${p.inNoInputRecord} at_dc=${p.atDc}\n")
             }
             val shown = st.shown
             for (m in st.markers) m.freqHz?.let { f ->
                 val v = shown?.let { Analysis.levelAt(it, f, s.offsetDb) }
                 append("# marker M${m.index} ${fmt("%.4f", f / 1e6)} MHz ${v?.let { fmt("%.2f", it) } ?: ""}\n")
             }
-            append("freq_mhz,level_db,max_hold_db,baseline_db\n")
+            append("freq_mhz,level_db,max_hold_db,baseline_db,frame_peak_db,point_status\n")
             val hold = st.hold?.takeIf { it.plan == t.plan }
             val base = st.baseline?.takeIf { it.plan == t.plan }
             fun f(v: Float?) = if (v == null || !v.isFinite()) "" else fmt("%.2f", v + s.offsetDb)
-            for (i in 0 until t.points)
-                append(fmt("%.6f,%s,%s,%s\n", t.freqAt(i) / 1e6, f(t.levelsDb[i]), f(hold?.levelsDb?.get(i)), f(base?.levelsDb?.get(i))))
+            val dc = t.plan.dcPoints().toHashSet()
+            val fp = t.framePeakDb
+            // Empty level = no value; point_status says why, so a gap never reads as a low level.
+            for (i in 0 until t.points) {
+                val status = when {
+                    !t.levelsDb[i].isFinite() -> "UNMEASURED"
+                    t.clipped -> "CLIPPED"
+                    i in dc -> if (t.dcPatched) "DC_PATCHED" else "DC_BIN"
+                    else -> "OK"
+                }
+                append(fmt("%.6f,%s,%s,%s,%s,%s\n", t.freqAt(i) / 1e6, f(t.levelsDb[i]), f(hold?.levelsDb?.get(i)),
+                    f(base?.levelsDb?.get(i)), f(fp?.get(i)), status))
+            }
         }
     }
 

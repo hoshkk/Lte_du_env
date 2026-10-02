@@ -157,4 +157,52 @@ class DriverTest {
         sdr.close()
         assertFalse(usb.repeaterOpen)
     }
+
+    // ---- USB speed paths, checked against the fake dongle (not real hardware) ----------
+
+    /** Samples from before the FIFO reset (previous frequency) never reach the analysis buffer. */
+    @Test fun staleSamplesAreDroppedEvenWhenDiscardAndCaptureShareReads() {
+        for (outLen in listOf(2 * 1024, 2 * 1000, 2 * 16384, 2 * 64)) {
+            val usb = FakeRtlUsb(staleBytesAfterReset = 2048 * 2)
+            val sdr = RtlSdr.open(usb)
+            for (f in listOf(903_000_000L, 904_800_000L, 906_600_000L)) {
+                sdr.tune(f)
+                val iq = FloatArray(outLen)
+                sdr.capture(iq, 2048)
+                assertTrue(iq.none { abs(it - (FakeRtlUsb.STALE - 127.4f) / 128f) < 1e-6 })
+                assertEquals(0, usb.i2cWritesSinceFifoReset) // FIFO reset came after the last tuner write
+            }
+        }
+        // Control: with too short a discard the stale bytes do show up, so the check above has teeth.
+        val usb = FakeRtlUsb(staleBytesAfterReset = 2048 * 2)
+        val sdr = RtlSdr.open(usb)
+        sdr.tune(903_000_000L)
+        val iq = FloatArray(2 * 1024)
+        sdr.capture(iq, 1024)
+        assertTrue(iq.any { abs(it - (FakeRtlUsb.STALE - 127.4f) / 128f) < 1e-6 })
+    }
+
+    /** Reopening (USB reconnect) starts the pointer-less read check from scratch. */
+    @Test fun reopenResetsPointerlessVerification() {
+        val first = FakeRtlUsb()
+        val a = RtlSdr.open(first)
+        for (f in sweepFreqs.take(4)) a.tune(f)
+        assertTrue(a.tuner.pointerlessReads)
+        a.close()
+        // Same device again: not trusted until verified again.
+        val b = RtlSdr.open(first)
+        assertFalse(b.tuner.pointerlessReads)
+        for (f in sweepFreqs.take(4)) assertTrue(b.tune(f))
+        assertTrue(b.tuner.pointerlessReads)
+        // A different device whose reads follow the pointer: must fall back, registers as reference.
+        val other = FakeRtlUsb(readStartsAtZero = false)
+        val refUsb = FakeRtlUsb(readStartsAtZero = false)
+        val c = RtlSdr.open(other)
+        val ref = RtlSdr.open(refUsb, fastTune = false)
+        for (f in sweepFreqs) {
+            assertTrue(c.tune(f)); assertTrue(ref.tune(f))
+            assertArrayEquals(refUsb.tunerRegs, other.tunerRegs)
+        }
+        assertFalse(c.tuner.pointerlessReads)
+    }
 }

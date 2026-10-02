@@ -72,16 +72,28 @@ class PowerSpectrum(val size: Int) {
         enbwBins = size * s2 / (s * s)
     }
 
-    /** [iq] interleaved; frames = iq.size / (2*size). Result is fftshifted, linear. */
-    fun compute(iq: FloatArray, out: DoubleArray = DoubleArray(size)): DoubleArray {
+    /**
+     * [iq] interleaved; frames = iq.size / (2*size). Result is fftshifted, linear.
+     *
+     * [removeMean] subtracts each frame's I/Q mean before windowing. That also
+     * removes a real signal sitting exactly on the tuned centre, so it is off
+     * unless the user asks for it. [peakOut], if given, receives the largest
+     * single-frame power per bin (same scale), so a burst shorter than the
+     * averaging time is not diluted away.
+     */
+    fun compute(iq: FloatArray, out: DoubleArray = DoubleArray(size), removeMean: Boolean = false,
+                peakOut: DoubleArray? = null): DoubleArray {
         val frames = iq.size / (2 * size)
         require(frames >= 1) { "IQ shorter than one FFT frame" }
         out.fill(0.0)
+        peakOut?.fill(0.0)
         for (f in 0 until frames) {
             val base = f * 2 * size
             var mi = 0f; var mq = 0f
-            for (i in 0 until size) { mi += iq[base + 2 * i]; mq += iq[base + 2 * i + 1] }
-            mi /= size; mq /= size
+            if (removeMean) {
+                for (i in 0 until size) { mi += iq[base + 2 * i]; mq += iq[base + 2 * i + 1] }
+                mi /= size; mq /= size
+            }
             for (i in 0 until size) {
                 re[i] = (iq[base + 2 * i] - mi) * window[i]
                 im[i] = (iq[base + 2 * i + 1] - mq) * window[i]
@@ -89,11 +101,14 @@ class PowerSpectrum(val size: Int) {
             fft.transform(re, im)
             for (k in 0 until size) {
                 val src = (k + size / 2) % size
-                out[k] += re[src].toDouble() * re[src] + im[src].toDouble() * im[src]
+                val p = re[src].toDouble() * re[src] + im[src].toDouble() * im[src]
+                out[k] += p
+                if (peakOut != null && p > peakOut[k]) peakOut[k] = p
             }
         }
         val scale = norm / frames
         for (k in 0 until size) out[k] *= scale
+        if (peakOut != null) for (k in 0 until size) peakOut[k] *= norm
         return out
     }
 }

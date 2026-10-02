@@ -3,39 +3,57 @@ package com.lteduenv.rxcheck.core.analysis
 import com.lteduenv.rxcheck.core.model.Mode
 import com.lteduenv.rxcheck.core.model.Settings
 import com.lteduenv.rxcheck.core.sweep.Trace
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
 
-enum class Level { OK, WARN, ALERT, HOLD }
-
-/** One-line field verdict with the reasons behind it. Rule based, not a fault diagnosis. */
-data class Verdict(val level: Level, val title: String, val reasons: List<String>)
-
-data class Results(
-    val channel: ChannelPower?,
-    val floorDbPerMhz: Double?,
-    val blocks: List<Block>,
-    /** External emissions first, then dongle-internal ones (shown greyed, not counted). */
-    val peaks: List<Peak>,
-    /** Channel power change versus the baseline, dB. */
-    val riseDb: Double?,
-    val verdict: Verdict,
-) {
-    val externalPeaks get() = peaks.filter { it.origin == Origin.EXTERNAL }
+/** How far the numbers of a sweep can be used. Not a pass/fail of the equipment. */
+enum class Validity {
+    /** Complete sweep, no clipping. */
+    VALID,
+    /** Usable, but some values are unmeasured or not computed (see notes). */
+    PARTIAL,
+    /** Numbers are not trustworthy (ADC clipping, incomplete sweep). */
+    INVALID,
 }
 
 /**
- * Turns a completed sweep into the field result for each mode.
- *
- * Spurious: a peak counts only if it is not a dongle-internal spur (28.8 MHz
- * crystal harmonic, or present in the no-input recording) and it shows up in at
- * least 2 of the last 3 sweeps, so one-off bursts and noise maxima do not alarm.
- *
- * Reverse: internal spurs are masked before integrating; the verdict combines
- * the rise versus the saved baseline and blocks standing out from the others.
+ * Short measurement-validity line plus factual notes (levels, counts, what was
+ * corrected). It deliberately says nothing like "normal", "faulty" or "no
+ * spurious": the user judges from the numbers.
+ */
+data class Status(val validity: Validity, val title: String, val notes: List<String>)
+
+data class Results(
+    /** Raw channel power; null if the channel is not fully swept or has unmeasured bins. */
+    val channel: ChannelPower?,
+    /** Why [channel] is null (shown instead of a number). */
+    val channelNote: String?,
+    /** Only with the user's internal-spur correction on: channel power with those bins replaced. */
+    val correctedChannel: ChannelPower?,
+    val floorDbPerMhz: Double?,
+    val blocks: List<Block>,
+    /** Everything above the threshold, strongest first; flags are hints only. */
+    val peaks: List<Peak>,
+    /** Raw channel power change versus the baseline, dB (null if either side is incomplete). */
+    val riseDb: Double?,
+    /** Same with the correction applied to both traces. */
+    val correctedRiseDb: Double?,
+    val status: Status,
+) {
+    val confirmedPeaks get() = peaks.filter { it.seenSweeps >= Evaluate.CONFIRM_SWEEPS && it.source == PeakSource.CURRENT }
+}
+
+/**
+ * Turns a completed sweep into numbers for each mode, without hiding anything:
+ * internal-spur candidates (28.8 MHz harmonics, no-input recording, DC bins) are
+ * flagged, not removed, and the raw spectrum is what the channel power is
+ * computed from. A peak seen in 2 of the last 3 sweeps is marked as repeated;
+ * one seen only now, only in Max Hold or only in the per-frame maximum is still
+ * listed.
  */
 object Evaluate {
-    /** Sweeps a peak must appear in (out of the recent history) to be reported. */
+    /** Sweeps a peak must appear in (out of the recent history) to count as repeated. */
     const val CONFIRM_SWEEPS = 2
 
     fun run(
@@ -50,95 +68,116 @@ object Evaluate {
         val center = (lo + hi) / 2
         val bw = hi - lo
         val tol = max(3 * trace.plan.binHz, 20e3)
-        val internalPeaks = internal?.takeIf { it.plan == trace.plan }?.let { Analysis.peaks(it, 6.0, maxCount = 200) } ?: emptyList()
-        val knownInternal = Analysis.xtalHarmonicsIn(trace.plan.startHz, trace.plan.stopHz) + internalPeaks.map { it.freqHz }
+        val base = baseline?.takeIf { it.plan.sameGrid(trace.plan) }
+        val rec = internal?.takeIf { it.plan.sameGrid(trace.plan) }
+        val recPeaks = rec?.let { Analysis.peaks(it, 6.0, maxCount = 200) } ?: emptyList()
         val floor = Analysis.noiseFloorDbPerMhz(trace, s.offsetDb)
+        val notes = ArrayList<String>()
 
-        if (trace.clipped) {
-            val v = Verdict(Level.HOLD, "입력 과다 · 판정 보류",
-                listOf("ADC 클리핑 ${String.format("%.2f", trace.clippedFraction * 100)}%", "이득을 낮추거나 감쇠기를 사용하세요"))
-            return Results(Analysis.channelPower(trace, center, bw, s.offsetDb), floor, emptyList(), emptyList(), null, v)
+        val channel = Analysis.channelPower(trace, center, bw, s.offsetDb)
+        val channelNote = when {
+            channel != null -> null
+            !Analysis.covers(trace, lo, hi) -> "채널 일부가 Span 밖 · 미계산"
+            else -> "채널 안 미측정 ${Analysis.missingBins(trace, lo, hi)} bin · 보류"
+        }
+        val baseCh = base?.let { Analysis.channelPower(it, center, bw, s.offsetDb) }
+        val rise = if (channel != null && baseCh != null) channel.totalDb - baseCh.totalDb else null
+
+        var corrected: ChannelPower? = null
+        var correctedRise: Double? = null
+        if (s.internalCorrection) {
+            val known = Analysis.xtalHarmonicsIn(trace.plan.startHz, trace.plan.stopHz) + recPeaks.map { it.freqHz }
+            corrected = Analysis.channelPower(Analysis.maskBins(trace, known, tol), center, bw, s.offsetDb)
+            val cb = base?.let { Analysis.channelPower(Analysis.maskBins(it, known, tol), center, bw, s.offsetDb) }
+            if (corrected != null && cb != null) correctedRise = corrected.totalDb - cb.totalDb
         }
 
-        return when (s.mode) {
+        val blocks: List<Block>
+        val peaks: List<Peak>
+        when (s.mode) {
             Mode.REVERSE -> {
-                val clean = Analysis.maskBins(trace, knownInternal, tol)
-                val cleanBase = baseline?.let { Analysis.maskBins(it, knownInternal, tol) }
-                val channel = Analysis.channelPower(clean, center, bw, s.offsetDb)
-                val blocks = Analysis.blocks(clean, center, bw, 1e6, s.offsetDb, cleanBase)
-                val baseCh = cleanBase?.let { Analysis.channelPower(it, center, bw, s.offsetDb) }
-                val rise = if (channel != null && baseCh != null) channel.totalDb - baseCh.totalDb else null
-                Results(channel, floor, blocks, emptyList(), rise, reverseVerdict(s, channel, blocks, rise, baseline != null))
+                blocks = Analysis.blocks(trace, center, bw, 1e6, s.offsetDb, base)
+                peaks = emptyList()
+                channel?.let { notes += "채널 전력 ${f1(it.totalDb)} dB · ${f1(it.psdDbPerMhz)} dB/MHz" }
+                when {
+                    baseline == null -> notes += "기준 없음 · 기준 대비 변화 미계산"
+                    base == null -> notes += "기준이 다른 주파수 격자 · 비교 안 함"
+                    rise != null -> notes += "기준 대비 ${signed(rise)} dB"
+                    else -> notes += "기준 또는 현재에 미측정 구간 · 기준 대비 미계산"
+                }
+                val t = s.thresholdDb
+                val high = blocks.filter { (it.aboveMedianDb ?: 0.0) >= t }
+                if (high.isNotEmpty()) notes += "블록 중앙값보다 ${f1(t)} dB 이상 높은 구간: ${ranges(high)}"
+                val risen = blocks.filter { (it.riseDb ?: 0.0) >= t }
+                if (risen.isNotEmpty()) notes += "기준보다 ${f1(t)} dB 이상 높은 구간: ${ranges(risen)}"
+                val missing = blocks.filter { !it.measured }
+                if (missing.isNotEmpty()) notes += "미측정 블록: ${ranges(missing)}"
             }
             Mode.SPURIOUS -> {
-                val recent = history.filter { it.plan == trace.plan && !it.clipped }.takeLast(3)
-                val recentPeaks = recent.map { Analysis.peaks(it, s.thresholdDb, maxCount = 200) }
-                val display = if (s.maxHold && hold != null && hold.plan == trace.plan) hold else trace
-                val need = minOf(CONFIRM_SWEEPS, recent.size)
-                val found = Analysis.peaks(trace, s.thresholdDb, lo, hi, s.offsetDb, maxCount = 60).mapNotNull { p ->
-                    val seen = recentPeaks.count { ps -> ps.any { abs(it.freqHz - p.freqHz) <= tol } }
-                    if (seen < need) return@mapNotNull null
-                    val origin = when {
-                        Analysis.nearXtalHarmonic(p.freqHz, tol) -> Origin.DONGLE_XTAL
-                        internalPeaks.any { ip -> abs(ip.freqHz - p.freqHz) <= tol && p.aboveFloorDb - ip.aboveFloorDb < 6 } ->
-                            Origin.DONGLE_RECORDED
-                        else -> Origin.EXTERNAL
-                    }
-                    val level = Analysis.levelAt(display, p.freqHz, s.offsetDb) ?: p.levelDb
-                    p.copy(levelDb = max(level, p.levelDb), origin = origin, seenSweeps = seen)
-                }
-                val sorted = found.sortedWith(compareBy<Peak> { it.origin != Origin.EXTERNAL }.thenByDescending { it.levelDb }).take(30)
-                Results(Analysis.channelPower(trace, center, bw, s.offsetDb), floor, emptyList(), sorted, null,
-                    spuriousVerdict(sorted, recent.size, internal != null))
+                blocks = emptyList()
+                peaks = spuriousPeaks(s, trace, hold, history, recPeaks, lo, hi, tol)
+                val cur = peaks.filter { it.source == PeakSource.CURRENT }
+                val repeated = cur.count { it.seenSweeps >= CONFIRM_SWEEPS }
+                notes += "플로어 +${f0(s.thresholdDb)} dB 이상 피크 ${cur.size}개" +
+                    if (cur.isNotEmpty()) " (반복 $repeated · 이번만 ${cur.size - repeated})" else ""
+                val recent = history.count { it.plan.sameGrid(trace.plan) && !it.clipped }
+                if (recent < CONFIRM_SWEEPS) notes += "반복 확인용 스윕 $recent/$CONFIRM_SWEEPS"
+                peaks.count { it.source == PeakSource.HOLD }.takeIf { it > 0 }?.let { notes += "Max Hold에만 있는 피크 ${it}개" }
+                peaks.count { it.source == PeakSource.FRAME_PEAK }.takeIf { it > 0 }?.let { notes += "짧은 신호(프레임 최대에서만) ${it}개" }
+                peaks.count { it.xtalHarmonic }.takeIf { it > 0 }?.let { notes += "28.8 MHz 배수 위치 ${it}개 (내부 신호 가능성, 제외 안 함)" }
+                peaks.count { it.inNoInputRecord }.takeIf { it > 0 }?.let { notes += "무입력 기록과 같은 주파수 ${it}개 (제외 안 함)" }
+                peaks.count { it.atDc }.takeIf { it > 0 }?.let { notes += "DC 위치 ${it}개 · 메뉴 '중심 이동'으로 재확인" }
+                if (s.channelPower) channel?.let { notes += "채널 전력 ${f1(it.totalDb)} dB" }
             }
         }
-    }
+        if (trace.meanRemoved) notes += "I/Q 평균 제거 적용 (중심 주파수 신호도 줄어듦)"
+        if (trace.dcPatched) notes += "중심 3 bin 보간 적용 (보정값)"
+        if (corrected != null) notes += "동글 신호 보정값은 별도 표시 (원본 아님)"
 
-    private fun reverseVerdict(s: Settings, ch: ChannelPower?, blocks: List<Block>, rise: Double?, hasBaseline: Boolean): Verdict {
-        if (ch == null) return Verdict(Level.HOLD, "채널이 화면 밖 · 판정 불가", listOf("Span 안에 채널 전체가 들어오게 하세요"))
-        val t = s.thresholdDb
-        val reasons = ArrayList<String>()
-        var level = Level.OK
-        fun raise(l: Level) { if (l.ordinal > level.ordinal) level = l }
-        rise?.let {
-            when {
-                it >= t -> { raise(Level.ALERT); reasons += "채널 전체가 기준보다 ${fmt(it)} dB 높음 (광대역 잡음 상승)" }
-                it >= t / 2 -> { raise(Level.WARN); reasons += "채널 전체가 기준보다 ${fmt(it)} dB 높음" }
-                else -> reasons += "기준 대비 ${fmt(it)} dB (정상 범위)"
-            }
+        val status = when {
+            trace.clipped -> Status(Validity.INVALID, "입력 과다 · 수치 신뢰 불가",
+                listOf("ADC 클리핑 ${String.format(Locale.US, "%.2f", trace.clippedFraction * 100)}% · 이득을 낮추거나 감쇠기 사용") + notes)
+            !trace.complete -> Status(Validity.INVALID, "스윕 미완료", notes)
+            trace.unlockedSegments > 0 -> Status(Validity.PARTIAL, "미측정 구간 있음",
+                listOf("PLL 잠금 실패 ${trace.unlockedSegments}구간 (${trace.missingPoints} bin 미측정)") + notes)
+            channelNote != null && (s.mode == Mode.REVERSE || s.channelPower) -> Status(Validity.PARTIAL, "채널 전력 미계산", listOf(channelNote) + notes)
+            else -> Status(Validity.VALID, "측정 완료", notes)
         }
-        val hotRise = blocks.filter { (it.riseDb ?: 0.0) >= t }
-        val hotLocal = blocks.filter { it.aboveMedianDb >= t }
-        val warnLocal = blocks.filter { it.aboveMedianDb >= t / 2 && it.aboveMedianDb < t }
-        if (hotRise.isNotEmpty()) { raise(Level.ALERT); reasons += "기준보다 ${fmt(t)} dB 이상 오른 구간: ${ranges(hotRise)}" }
-        if (hotLocal.isNotEmpty()) { raise(Level.ALERT); reasons += "주변보다 튀는 구간(협대역 간섭 의심): ${ranges(hotLocal)}" }
-        else if (warnLocal.isNotEmpty()) { raise(Level.WARN); reasons += "약간 높은 구간: ${ranges(warnLocal)}" }
-        if (!hasBaseline) reasons += "기준 미저장 · 블록 균일도만 판정 (정상 시간대에 기준 저장 권장)"
-        val title = when (level) {
-            Level.OK -> "정상"
-            Level.WARN -> "주의"
-            Level.ALERT -> if (hotLocal.isNotEmpty() && (rise == null || rise < t)) "협대역 간섭 의심" else "잡음 상승 의심"
-            Level.HOLD -> "판정 보류"
+        return Results(channel, channelNote, corrected, floor, blocks, peaks, rise, correctedRise, status)
+    }
+
+    private fun spuriousPeaks(
+        s: Settings, trace: Trace, hold: Trace?, history: List<Trace>, recPeaks: List<Peak>,
+        lo: Double, hi: Double, tol: Double,
+    ): List<Peak> {
+        val recent = history.filter { it.plan.sameGrid(trace.plan) && !it.clipped }.takeLast(3)
+        val recentPeaks = recent.map { Analysis.peaks(it, s.thresholdDb, maxCount = 200) }
+        val dc = trace.plan.dcPoints().map { trace.freqAt(it) }
+        val halfBin = trace.plan.binHz / 2 + 1.0
+        fun annotate(p: Peak, source: PeakSource) = p.copy(
+            source = source,
+            seenSweeps = max(1, recentPeaks.count { ps -> ps.any { abs(it.freqHz - p.freqHz) <= tol } }),
+            xtalHarmonic = Analysis.nearXtalHarmonic(p.freqHz, tol),
+            inNoInputRecord = recPeaks.any { abs(it.freqHz - p.freqHz) <= tol },
+            atDc = source != PeakSource.HOLD && dc.any { abs(it - p.freqHz) <= halfBin },
+        )
+        val out = ArrayList<Peak>()
+        Analysis.peaks(trace, s.thresholdDb, lo, hi, s.offsetDb, maxCount = 60).forEach { out += annotate(it, PeakSource.CURRENT) }
+        fun addIfNew(list: List<Peak>, source: PeakSource) {
+            for (p in list) if (out.none { abs(it.freqHz - p.freqHz) <= tol }) out += annotate(p, source)
         }
-        return Verdict(level, title, reasons)
+        if (s.maxHold && hold != null && hold.plan.sameGrid(trace.plan))
+            addIfNew(Analysis.peaks(hold, s.thresholdDb, lo, hi, s.offsetDb, maxCount = 60), PeakSource.HOLD)
+        trace.framePeakDb?.let { fp ->
+            addIfNew(Analysis.peaks(trace.withLevels(fp), s.thresholdDb, lo, hi, s.offsetDb, maxCount = 60), PeakSource.FRAME_PEAK)
+        }
+        return out.sortedByDescending { it.levelDb }.take(40)
     }
 
-    private fun spuriousVerdict(peaks: List<Peak>, sweeps: Int, recorded: Boolean): Verdict {
-        val ext = peaks.filter { it.origin == Origin.EXTERNAL }
-        val dongle = peaks.size - ext.size
-        val reasons = ArrayList<String>()
-        if (dongle > 0) reasons += "동글 자체 신호 ${dongle}건 제외"
-        if (!recorded) reasons += "무입력 기록 없음 · 메뉴 '동글 자체 신호 기록'으로 더 정확히 거를 수 있음"
-        if (sweeps < CONFIRM_SWEEPS) return Verdict(Level.HOLD, "확인 중 (스윕 $sweeps/$CONFIRM_SWEEPS)", reasons)
-        if (ext.isEmpty()) return Verdict(Level.OK, "불요파 없음", reasons)
-        val inCh = ext.count { it.inChannel }
-        reasons.add(0, ext.take(3).joinToString(", ") { String.format("%.3f MHz (+%.0f dB)", it.freqHz / 1e6, it.aboveFloorDb) })
-        return Verdict(if (inCh > 0) Level.ALERT else Level.WARN,
-            "불요파 ${ext.size}건" + if (inCh > 0) " · RX 대역 안 ${inCh}건" else "", reasons)
-    }
-
-    private fun fmt(v: Double) = String.format(java.util.Locale.US, "%+.1f", v)
+    private fun f0(v: Double) = String.format(Locale.US, "%.0f", v)
+    private fun f1(v: Double) = String.format(Locale.US, "%.1f", v)
+    private fun signed(v: Double) = String.format(Locale.US, "%+.1f", v)
 
     private fun ranges(blocks: List<Block>) =
-        blocks.joinToString(", ") { String.format(java.util.Locale.US, "%.1f–%.1f", it.startHz / 1e6, it.stopHz / 1e6) } + " MHz"
+        blocks.joinToString(", ") { String.format(Locale.US, "%.1f–%.1f", it.startHz / 1e6, it.stopHz / 1e6) } + " MHz"
 }

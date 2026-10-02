@@ -54,6 +54,9 @@ class Store(context: Context) {
                 settleMs = prefs.getInt(p + "settle", d.settleMs),
                 channelPower = prefs.getBoolean(p + "chpow", d.channelPower),
                 dcPatch = prefs.getBoolean(p + "dc", d.dcPatch),
+                iqMeanRemoval = prefs.getBoolean(p + "iqmean", d.iqMeanRemoval),
+                dcShift = prefs.getBoolean(p + "dcshift", d.dcShift),
+                internalCorrection = prefs.getBoolean(p + "corr", d.internalCorrection),
                 refLevelDb = prefs.double(p + "ref", d.refLevelDb),
                 dbPerDiv = prefs.double(p + "div", d.dbPerDiv),
             ).takeIf { it.validate() == null }
@@ -70,6 +73,8 @@ class Store(context: Context) {
             .putString(p + "thr", s.thresholdDb.toString()).putBoolean(p + "fast", s.fastTune)
             .putBoolean(p + "narrowif", s.narrowIf).putInt(p + "settle", s.settleMs)
             .putBoolean(p + "chpow", s.channelPower).putBoolean(p + "dc", s.dcPatch)
+            .putBoolean(p + "iqmean", s.iqMeanRemoval).putBoolean(p + "dcshift", s.dcShift)
+            .putBoolean(p + "corr", s.internalCorrection)
             .putString(p + "ref", s.refLevelDb.toString()).putString(p + "div", s.dbPerDiv.toString())
             .apply()
     }
@@ -77,10 +82,15 @@ class Store(context: Context) {
     private fun SharedPreferences.double(key: String, def: Double): Double =
         runCatching { getString(key, null)?.toDouble() }.getOrNull() ?: def
 
-    /** Everything that shifts raw levels must match for a baseline to be comparable. */
+    /**
+     * Everything that shifts raw levels must match for a baseline to be comparable.
+     * Files from 1.3.1 and earlier had I/Q mean removal always on and no suffix;
+     * "_m0" marks recordings without it.
+     */
     private fun key(p: SweepPlan, s: Settings) =
-        "%d_%d_%d_%d_g%s_if%s_dc%s".format(p.startHz.toLong(), p.binHz.toLong(), p.points, p.sampleRate,
-            s.gainStep?.toString() ?: "agc", if (s.narrowIf) "n" else "w", if (s.dcPatch) "1" else "0")
+        "%d_%d_%d_%d_g%s_if%s_dc%s%s".format(p.startHz.toLong(), p.binHz.toLong(), p.points, p.sampleRate,
+            s.gainStep?.toString() ?: "agc", if (s.narrowIf) "n" else "w", if (s.dcPatch) "1" else "0",
+            if (s.iqMeanRemoval) "" else "_m0")
 
     fun saveBaseline(t: Trace, s: Settings) = saveTrace("", t, s)
     fun loadBaseline(plan: SweepPlan, s: Settings) = loadTrace("", plan, s)

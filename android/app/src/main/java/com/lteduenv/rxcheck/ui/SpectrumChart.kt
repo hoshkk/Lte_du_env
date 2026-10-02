@@ -39,6 +39,7 @@ object ChartColors {
     val peak = Color(0xFFFF8A3D)
     val marker = Color(0xFFFF5D5D)
     val markerOther = Color(0xFF4C8DFF)
+    val unmeasured = Color(0xFFFFB020)
 }
 
 private const val LEFT = 48f
@@ -161,6 +162,28 @@ fun SpectrumChart(
             val upto = livePoints.coerceIn(0, it.points)
             if (upto < it.points) drawTrace(it, upto, it.points, offsetDb, ::x, ::y, ChartColors.stale, minDb, 1.6f)
             drawTrace(it, 0, upto, offsetDb, ::x, ::y, ChartColors.live, minDb, 1.8f)
+        }
+        // Unmeasured stretches (PLL not locked) get a hatched band, so a gap never passes for a low level.
+        live?.let { t ->
+            val upto = livePoints.coerceIn(0, t.points)
+            var i = 0
+            while (i < upto) {
+                if (t.levelsDb[i].isFinite()) { i++; continue }
+                val a = i
+                while (i < upto && !t.levelsDb[i].isFinite()) i++
+                val xa = x(t.freqAt(a) - t.plan.binHz / 2); val xb = x(t.freqAt(i - 1) + t.plan.binHz / 2)
+                drawRect(ChartColors.unmeasured.copy(alpha = 0.18f), Offset(xa, TOP), Size(max(2f, xb - xa), h))
+                var hx = xa
+                while (hx < xb) { drawLine(ChartColors.unmeasured.copy(alpha = 0.5f), Offset(hx, TOP + h), Offset(min(xb, hx + 12f), TOP + h - 12f)); hx += 10f }
+                text.color = ChartColors.unmeasured.toArgb()
+                nc.drawText("미측정", xa + 2f, TOP + h / 2, text)
+                text.color = ChartColors.axisText.toArgb()
+            }
+            // Segment centres (DC bins): small ticks on the frequency axis.
+            if (t.plan.segments.size <= 60) for (seg in t.plan.segments) {
+                val dc = t.plan.freqAt(seg.firstPoint + (t.plan.fftSize / 2 - seg.firstBin))
+                if (dc in f0..f1) drawLine(ChartColors.axisText.copy(alpha = 0.6f), Offset(x(dc), TOP + h), Offset(x(dc), TOP + h - 6f), 1.5f)
+            }
         }
         for (p in peaks) {
             val px = x(p.freqHz); val py = y(p.levelDb)

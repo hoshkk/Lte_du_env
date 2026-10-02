@@ -26,6 +26,23 @@ data class SweepPlan(
     val stopHz get() = startHz + (points - 1) * binHz
     fun freqAt(i: Int) = startHz + i * binHz
 
+    /** Same frequency grid (traces can be compared bin by bin even if segmented differently). */
+    fun sameGrid(o: SweepPlan) = startHz == o.startHz && binHz == o.binHz && points == o.points && fftSize == o.fftSize
+
+    /**
+     * Points that fall on a segment's tuned centre (the DC bin) or right next to
+     * it. A peak there may be the receiver's own DC/LO residue or a real signal
+     * on that frequency; moving the centres ([create] with dcShift) tells them apart.
+     */
+    fun dcPoints(): IntArray {
+        val out = ArrayList<Int>()
+        for (seg in segments) {
+            val dc = seg.firstPoint + (fftSize / 2 - seg.firstBin)
+            for (p in dc - 1..dc + 1) if (p >= seg.firstPoint && p < seg.firstPoint + seg.count) out += p
+        }
+        return out.toIntArray()
+    }
+
     companion object {
         /** Fraction of each capture used: the IF/decimation filter rolls off at the edges. */
         const val USABLE_FRACTION = 0.75
@@ -34,8 +51,13 @@ data class SweepPlan(
         fun fftSizeFor(rbwHz: Double, sampleRate: Int): Int =
             (6..14).map { 1 shl it }.minBy { abs(ln(1.44 * sampleRate / it / rbwHz)) }
 
+        /**
+         * [dcShift] moves every segment's tuned centre (by about half a segment,
+         * still using only the usable middle of each capture) so the DC bins land
+         * on different frequencies than in the normal plan. Same grid either way.
+         */
         fun create(centerHz: Double, spanHz: Double, rbwHz: Double,
-                   sampleRate: Int = 2_400_000): SweepPlan {
+                   sampleRate: Int = 2_400_000, dcShift: Boolean = false): SweepPlan {
             require(spanHz > 0 && rbwHz > 0)
             val n = fftSizeFor(rbwHz, sampleRate)
             val bin = sampleRate.toDouble() / n
@@ -44,8 +66,18 @@ data class SweepPlan(
             val start = centerHz - (total - 1) * bin / 2
             val segs = ArrayList<Segment>()
             var p = 0
+            if (dcShift && total <= usable / 2) {
+                // One capture: tune off the span centre as far as the usable window allows.
+                val shift = (usable - total) / 2
+                val ci = total / 2 + shift
+                segs += Segment((start + ci * bin).roundToLong(), 0, total, n / 2 - total / 2 - shift)
+                p = total
+            }
+            var first = dcShift
             while (p < total) {
-                val count = min(usable, total - p)
+                // Shifted plan: a half-size first segment moves every later boundary (and centre).
+                val count = min(if (first) usable / 2 else usable, total - p)
+                first = false
                 // Centre the bins this segment supplies inside its usable window.
                 val ci = p + count / 2
                 val centerHz = (start + ci * bin).roundToLong()
@@ -76,7 +108,18 @@ class Trace(
     val timestampMs: Long,
     /** Fraction of I/Q components at the ADC limits in the segments so far. */
     val clippedFraction: Double = 0.0,
+    /** Largest single-frame level per point (dBFS); shows bursts shorter than the averaging. */
+    val framePeakDb: FloatArray? = null,
+    /** Processing applied to these levels (recorded so results can say so). */
+    val meanRemoved: Boolean = false,
+    val dcPatched: Boolean = false,
 ) {
+    /** Same trace with other levels (and no frame peaks unless given). */
+    fun withLevels(levels: FloatArray, peaks: FloatArray? = null, clipped: Double = clippedFraction) =
+        Trace(plan, levels, enbwHz, completedSegments, unlockedSegments, timing, timestampMs, clipped, peaks, meanRemoved, dcPatched)
+
+    /** Points with no valid measurement (PLL not locked, not yet swept). */
+    val missingPoints get() = levelsDb.count { !it.isFinite() }
     /** More than 0.1% of samples at full scale: the dongle is overloaded. */
     val clipped get() = clippedFraction > CLIP_LIMIT
     val complete get() = completedSegments == plan.segments.size
@@ -99,10 +142,16 @@ class SweepEngine(private val rx: Receiver) {
 
     var discardSamples = 2048
 
+    /**
+     * [dcPatch] replaces the 3 bins around each segment centre with their
+     * neighbours (a correction, recorded on the trace). [removeMean] subtracts
+     * each FFT frame's I/Q mean. Both off = raw spectrum.
+     */
     fun sweep(
         plan: SweepPlan,
         averages: Int,
         dcPatch: Boolean = false,
+        removeMean: Boolean = false,
         onSegment: ((Trace) -> Unit)? = null,
         isActive: () -> Boolean = { true },
     ): Trace? {
@@ -112,8 +161,10 @@ class SweepEngine(private val rx: Receiver) {
         val frames = averages.coerceIn(1, 256)
         if (iq.size != 2 * n * frames) iq = FloatArray(2 * n * frames)
         val levels = FloatArray(plan.points) { Float.NaN }
+        val framePeak = FloatArray(plan.points) { Float.NaN }
         val enbwHz = ps.enbwBins * plan.binHz
         val out = DoubleArray(n)
+        val peak = DoubleArray(n)
         rx.takeStats()
         val t0 = System.nanoTime()
         var tuneNs = 0L; var capNs = 0L; var dspNs = 0L
@@ -129,11 +180,14 @@ class SweepEngine(private val rx: Receiver) {
             clipped += rx.capture(iq, discardSamples)
             components += iq.size
             val c = System.nanoTime()
-            ps.compute(iq, out)
-            if (dcPatch) patchDc(out)
+            ps.compute(iq, out, removeMean, peak)
+            if (dcPatch) { patchDc(out); patchDc(peak) }
             for (k in 0 until seg.count) {
+                // An unlocked segment stays NaN (unmeasured), never a number.
                 levels[seg.firstPoint + k] =
                     if (locked) (10 * log10(max(out[seg.firstBin + k], 1e-20))).toFloat() else Float.NaN
+                framePeak[seg.firstPoint + k] =
+                    if (locked) (10 * log10(max(peak[seg.firstBin + k], 1e-20))).toFloat() else Float.NaN
             }
             if (!locked) unlocked++
             val d = System.nanoTime()
@@ -143,7 +197,8 @@ class SweepEngine(private val rx: Receiver) {
                 val timing = if (last) SweepTiming((d - t0) / 1_000_000, tuneNs / 1_000_000,
                     capNs / 1_000_000, dspNs / 1_000_000, rx.takeStats()) else null
                 val trace = Trace(plan, levels.copyOf(), enbwHz, index + 1, unlocked, timing,
-                    System.currentTimeMillis(), clipped.toDouble() / components)
+                    System.currentTimeMillis(), clipped.toDouble() / components,
+                    if (last) framePeak.copyOf() else null, removeMean, dcPatch)
                 onSegment?.invoke(trace)
                 if (last) return trace
             }

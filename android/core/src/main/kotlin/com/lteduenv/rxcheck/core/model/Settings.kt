@@ -47,7 +47,14 @@ data class Settings(
     val settleMs: Int = 0,
     /** Show integrated channel power for the channel BW. */
     val channelPower: Boolean = true,
+    /** Replace the 3 bins at each segment centre with their neighbours (a correction; off = raw). */
     val dcPatch: Boolean = false,
+    /** Subtract each FFT frame's I/Q mean (also removes a real signal exactly on the centre). */
+    val iqMeanRemoval: Boolean = false,
+    /** Move the segment centres so DC bins fall on other frequencies (recheck of a DC-position peak). */
+    val dcShift: Boolean = false,
+    /** Also show channel power with 28.8 MHz harmonics / recorded internal spurs replaced (raw stays primary). */
+    val internalCorrection: Boolean = false,
     val refLevelDb: Double = -20.0,
     val dbPerDiv: Double = 10.0,
 ) {

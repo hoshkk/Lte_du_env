@@ -47,10 +47,10 @@ import androidx.compose.ui.unit.sp
 import com.lteduenv.rxcheck.MeasureViewModel
 import com.lteduenv.rxcheck.UiState
 import com.lteduenv.rxcheck.core.analysis.Analysis
-import com.lteduenv.rxcheck.core.analysis.Level
-import com.lteduenv.rxcheck.core.analysis.Origin
+import com.lteduenv.rxcheck.core.analysis.PeakSource
 import com.lteduenv.rxcheck.core.analysis.Results
-import com.lteduenv.rxcheck.core.analysis.Verdict
+import com.lteduenv.rxcheck.core.analysis.Status
+import com.lteduenv.rxcheck.core.analysis.Validity
 import com.lteduenv.rxcheck.core.model.Band
 import com.lteduenv.rxcheck.core.model.Mode
 import com.lteduenv.rxcheck.core.model.Settings
@@ -67,11 +67,11 @@ internal val Accent = Color(0xFF4C8DFF)
 private val Panel = Color(0xFF151922)
 private val Line = Color(0xFF2A303C)
 
-private fun Level.color() = when (this) {
-    Level.OK -> Good
-    Level.WARN -> Warn
-    Level.ALERT -> Bad
-    Level.HOLD -> Dim
+/** Colour says how usable the numbers are, not whether the equipment is good. */
+private fun Validity.color() = when (this) {
+    Validity.VALID -> Accent
+    Validity.PARTIAL -> Warn
+    Validity.INVALID -> Bad
 }
 
 @Composable
@@ -157,6 +157,7 @@ private fun TopBar(
                 HorizontalDivider()
                 MenuItem("동글 자체 신호 기록 (안테나 분리 상태)", state.last != null, close, vm::recordInternal)
                 MenuItem("동글 자체 신호 기록 삭제", state.internal != null, close, vm::clearInternal)
+                MenuItem(if (s.dcShift) "중심 이동 해제 (원래 구간)" else "중심 이동 (DC 위치 재확인)", true, close, vm::toggleDcShift)
                 if (s.mode == Mode.REVERSE) {
                     MenuItem("현재를 기준으로 저장", state.last != null, close, vm::saveBaseline)
                     MenuItem("기준 삭제", state.baseline != null, close, vm::clearBaseline)
@@ -228,7 +229,11 @@ private fun InfoLine(state: UiState) {
         "RBW ${s.rbwKhz.f(if (s.rbwKhz < 10) 1 else 0)}k",
         "평균 ${s.averages}",
         if (s.offsetDb != 0.0) "Offset ${signed(s.offsetDb)}" else null,
-        t?.let { "스윕 ${it.totalMs} ms (${if (it.totalMs > 0) (1000.0 / it.totalMs).f(1) else "-"}/s)" },
+        // Full-span completion time vs. how often the screen gets new data (every segment).
+        t?.let { "SPAN 완료 ${it.totalMs} ms (${if (it.totalMs > 0) (1000.0 / it.totalMs).f(1) else "-"}회/s)" },
+        t?.let { tm -> state.last?.plan?.segments?.size?.takeIf { it > 0 }?.let { n ->
+            "화면 갱신 ${(tm.totalMs.toDouble() / n).f(1)} ms마다 ($n구간)" } },
+        if (s.dcShift) "중심 이동 중" else null,
         state.device,
     )
     Text(parts.joinToString("  ·  "), color = Dim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -247,7 +252,7 @@ private fun ChartBox(state: UiState, vm: MeasureViewModel, modifier: Modifier) {
             offsetDb = s.offsetDb, refLevelDb = s.refLevelDb, dbPerDiv = s.dbPerDiv,
             startHz = s.startMhz * 1e6, stopHz = s.stopMhz * 1e6,
             channelHz = s.channelHz(),
-            peaks = state.results?.externalPeaks ?: emptyList(),
+            peaks = state.results?.peaks ?: emptyList(),
             markers = state.markers, selectedMarker = state.selectedMarker,
             onTap = vm::placeMarker, onDoubleTap = vm::autoScale,
             onRefDrag = vm::dragRef, onRefDragEnd = vm::commitRef, onPinch = vm::zoomSpan,
@@ -316,28 +321,31 @@ private fun ResultPanel(state: UiState, vm: MeasureViewModel, modifier: Modifier
     Column(modifier.clip(RoundedCornerShape(10.dp)).background(Panel).verticalScroll(rememberScrollState()).padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (r == null) {
-            VerdictCard(Verdict(Level.HOLD, if (state.running) "첫 스윕 측정 중…" else "측정 대기", emptyList()))
+            StatusCard(Status(Validity.PARTIAL, if (state.running) "첫 스윕 측정 중…" else "측정 대기", emptyList()))
         } else {
-            VerdictCard(r.verdict)
+            StatusCard(r.status)
             when (s.mode) {
                 Mode.REVERSE -> ReverseResults(state, r, vm)
                 Mode.SPURIOUS -> SpuriousResults(r)
             }
         }
-        if (s.channelPower && s.mode == Mode.SPURIOUS) r?.channel?.let {
-            Stat("채널 전력", "${it.totalDb.f(1)} dB")
+        if (s.channelPower && s.mode == Mode.SPURIOUS && r != null) {
+            val ch = r.channel
+            if (ch != null) Stat("채널 전력", "${ch.totalDb.f(1)} dB") else Stat("채널 전력", "미측정", Warn)
         }
         Text("레벨: dBFS(+Offset) 상대값", color = Dim, fontSize = 10.sp)
     }
 }
 
 @Composable
-private fun VerdictCard(v: Verdict) {
-    val c = v.level.color()
+private fun StatusCard(v: Status) {
+    val c = v.validity.color()
+    var all by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(c.copy(alpha = 0.16f))
-        .border(1.dp, c.copy(alpha = 0.6f), RoundedCornerShape(8.dp)).padding(10.dp)) {
-        Text(v.title, color = c, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        for (reason in v.reasons.take(4)) Text("· $reason", color = Color.White, fontSize = 12.sp)
+        .border(1.dp, c.copy(alpha = 0.6f), RoundedCornerShape(8.dp)).clickable { all = !all }.padding(10.dp)) {
+        Text(v.title, color = c, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        for (note in if (all) v.notes else v.notes.take(4)) Text("· $note", color = Color.White, fontSize = 12.sp)
+        if (!all && v.notes.size > 4) Text("… ${v.notes.size - 4}개 더 (눌러서 보기)", color = Dim, fontSize = 11.sp)
     }
 }
 
@@ -353,11 +361,16 @@ private fun Stat(label: String, value: String, color: Color = Color.White) {
 private fun ReverseResults(state: UiState, r: Results, vm: MeasureViewModel) {
     val s = state.settings
     var details by remember { mutableStateOf(false) }
-    r.channel?.let {
-        Stat("채널 전력", "${it.totalDb.f(1)} dB")
-        Stat("PSD", "${it.psdDbPerMhz.f(1)} dB/MHz")
-    }
-    r.riseDb?.let { Stat("기준 대비", "${signed(it)} dB", if (it >= s.thresholdDb) Bad else if (it >= s.thresholdDb / 2) Warn else Good) }
+    val ch = r.channel
+    if (ch != null) {
+        Stat("채널 전력", "${ch.totalDb.f(1)} dB")
+        Stat("PSD", "${ch.psdDbPerMhz.f(1)} dB/MHz")
+    } else Stat("채널 전력", "미측정", Warn)
+    r.correctedChannel?.let { Stat("보정값(동글 신호 대체)", "${it.totalDb.f(1)} dB", Dim) }
+    val rise = r.riseDb
+    if (rise != null) Stat("기준 대비", "${signed(rise)} dB")
+    else if (state.baseline != null) Stat("기준 대비", "미계산", Warn)
+    r.correctedRiseDb?.let { Stat("기준 대비 보정값", "${signed(it)} dB", Dim) }
     if (state.baseline == null) {
         OutlinedButton(onClick = vm::saveBaseline, enabled = state.last != null && !state.clipped, modifier = Modifier.fillMaxWidth()) {
             Text("현재를 기준으로 저장")
@@ -371,23 +384,32 @@ private fun ReverseResults(state: UiState, r: Results, vm: MeasureViewModel) {
         BlockBars(r, s.thresholdDb)
         TextButton(onClick = { details = !details }) { Text(if (details) "구간 상세 닫기" else "구간 상세 보기") }
         if (details) for (b in r.blocks) {
-            val hot = b.aboveMedianDb >= s.thresholdDb || (b.riseDb ?: 0.0) >= s.thresholdDb
-            Text("${(b.startHz / 1e6).f(1)}  ${b.psdDbPerMhz.f(1)}  ${signed(b.aboveMedianDb)}" + (b.riseDb?.let { "  기준${signed(it)}" } ?: ""),
-                color = if (hot) Bad else Color.White, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            val hot = (b.aboveMedianDb ?: 0.0) >= s.thresholdDb || (b.riseDb ?: 0.0) >= s.thresholdDb
+            val psd = b.psdDbPerMhz
+            Text("${(b.startHz / 1e6).f(1)}  " + (if (psd == null) "미측정 (${b.missingBins} bin)" else
+                "${psd.f(1)}  ${b.aboveMedianDb?.let { signed(it) } ?: "-"}" +
+                    (b.riseDb?.let { "  기준${signed(it)}" } ?: if (b.baselineMissingBins > 0) "  기준 미측정" else "")),
+                color = if (psd == null) Warn else if (hot) Bad else Color.White, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
         }
     }
 }
 
 @Composable
 private fun BlockBars(r: Results, threshold: Double) {
-    val maxDev = (r.blocks.maxOfOrNull { maxOf(it.aboveMedianDb, it.riseDb ?: 0.0) } ?: 0.0).coerceAtLeast(threshold * 1.5)
+    fun dev(b: com.lteduenv.rxcheck.core.analysis.Block) = maxOf(b.aboveMedianDb ?: 0.0, b.riseDb ?: 0.0)
+    val maxDev = (r.blocks.maxOfOrNull { dev(it) } ?: 0.0).coerceAtLeast(threshold * 1.5)
     Row(Modifier.fillMaxWidth().height(40.dp), horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.Bottom) {
         for (b in r.blocks) {
-            val dev = maxOf(b.aboveMedianDb, b.riseDb ?: 0.0)
-            val frac = ((dev / maxDev).coerceIn(0.06, 1.0)).toFloat()
+            // Unmeasured: full-height outline only, never a value-looking bar.
+            if (!b.measured) {
+                Box(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(2.dp)).border(1.dp, Warn, RoundedCornerShape(2.dp)))
+                continue
+            }
+            val d = dev(b)
+            val frac = ((d / maxDev).coerceIn(0.06, 1.0)).toFloat()
             Box(Modifier.weight(1f).fillMaxHeight(frac).clip(RoundedCornerShape(2.dp))
-                .background(if (dev >= threshold) Bad else if (dev >= threshold / 2) Warn else Good))
+                .background(if (d >= threshold) Bad else if (d >= threshold / 2) Warn else Accent))
         }
     }
 }
@@ -395,23 +417,22 @@ private fun BlockBars(r: Results, threshold: Double) {
 @Composable
 private fun SpuriousResults(r: Results) {
     r.floorDbPerMhz?.let { Stat("노이즈 플로어", "${it.f(1)} dB/MHz") }
-    val ext = r.externalPeaks
-    if (ext.isNotEmpty()) {
-        Text("검출 신호 (2회 이상 반복)", color = Dim, fontSize = 12.sp)
-        for (p in ext.take(12)) {
+    if (r.peaks.isNotEmpty()) {
+        Text("플로어 위 피크 (반복 = 최근 3회 중 2회 이상)", color = Dim, fontSize = 12.sp)
+        for (p in r.peaks.take(15)) {
             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).background(Color(0xFF1C212B)).padding(6.dp)) {
-                Text("${(p.freqHz / 1e6).f(3)} MHz", color = if (p.inChannel) Bad else Color.White, fontSize = 14.sp,
+                Text("${(p.freqHz / 1e6).f(3)} MHz", color = if (p.inChannel) Warn else Color.White, fontSize = 14.sp,
                     fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-                Text("${p.levelDb.f(1)} dB · 플로어 +${p.aboveFloorDb.f(0)} · 폭 ${(p.bw10dBHz / 1e3).f(0)}k" +
+                val seen = when (p.source) {
+                    PeakSource.CURRENT -> if (p.seenSweeps >= 2) "반복 ${p.seenSweeps}회" else "이번 스윕만"
+                    else -> p.source.label
+                }
+                Text("${p.levelDb.f(1)} dB · 플로어 +${p.aboveFloorDb.f(0)} · 폭 ${(p.bw10dBHz / 1e3).f(0)}k · $seen" +
                     if (p.inChannel) " · RX 대역 안" else "", color = Dim, fontSize = 11.sp)
+                if (p.hints.isNotEmpty()) Text(p.hints.joinToString(" · "), color = Warn, fontSize = 11.sp)
             }
         }
-    }
-    val dongle = r.peaks.filter { it.origin != Origin.EXTERNAL }
-    if (dongle.isNotEmpty()) {
-        Text("동글 자체 신호 (판정 제외)", color = Dim, fontSize = 12.sp)
-        for (p in dongle.take(6)) Text("${(p.freqHz / 1e6).f(3)} MHz · ${p.origin.label.removePrefix("동글 자체 ")}",
-            color = Dim, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+        if (r.peaks.size > 15) Text("… ${r.peaks.size - 15}개 더 (CSV에 전체)", color = Dim, fontSize = 11.sp)
     }
 }
 

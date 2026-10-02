@@ -16,7 +16,15 @@ class FakeRtlUsb(
     var vcoFineTune: Int = 1,
     /** R82xx behaviour: reads start at register 0 regardless of the pointer. */
     var readStartsAtZero: Boolean = true,
+    /**
+     * Bytes still in the USB FIFO/pipeline from before the last FIFO reset
+     * (i.e. from the previous frequency). They come first and read [STALE].
+     */
+    var staleBytesAfterReset: Int = 0,
 ) : UsbIo {
+    private var staleLeft = 0
+    /** Tuner register writes seen after the last FIFO reset (must be 0 when capturing). */
+    var i2cWritesSinceFifoReset = 0
     /** I2C register pointer, for chips whose reads continue from it. */
     var pointer = 0
     var bulkCalls = 0
@@ -38,8 +46,13 @@ class FakeRtlUsb(
                 if (length > 1) {
                     for (i in 1 until length) tunerRegs[bytes[0] + i - 1] = bytes[i]
                     i2cWrites += bytes
+                    i2cWritesSinceFifoReset++
                     pointer = bytes[0] + length - 1
                 } else pointer = bytes[0]
+            }
+            index == 0x110 && value == 0x2148 && length == 2 && bytes[0] == 0x10 -> { // EPA_CTL: FIFO reset
+                staleLeft = staleBytesAfterReset
+                i2cWritesSinceFifoReset = 0
             }
             value and 0xff == 0x20 -> { // demod register
                 demodWrites++
@@ -76,7 +89,10 @@ class FakeRtlUsb(
 
     override fun bulkIn(buffer: ByteArray, length: Int, timeoutMs: Int): Int {
         bulkCalls++
-        buffer.fill(127.toByte(), 0, length)
+        val stale = minOf(staleLeft, length)
+        buffer.fill(STALE.toByte(), 0, stale)
+        buffer.fill(127.toByte(), stale, length)
+        staleLeft -= stale
         return length
     }
 
@@ -88,5 +104,9 @@ class FakeRtlUsb(
         val nint = (reg14 and 0x3f) * 4 + (reg14 shr 6) + 13
         val sdm = (tunerRegs[0x16] shl 8) or tunerRegs[0x15]
         return 2.0 * xtal * (nint + sdm / 65536.0) / mixDiv
+    }
+
+    companion object {
+        const val STALE = 200
     }
 }
