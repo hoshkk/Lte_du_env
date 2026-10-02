@@ -62,7 +62,17 @@ data class UiState(
     val autoFit: String? = null,
     val presets: Set<Mode> = emptySet(),
     val error: String? = null,
+    /** Near-field sniffing (probe the dongle along cables/connectors, watch the level rise). */
+    val sniff: Boolean = false,
+    /** Highest level of the first sweep after sniffing started (or after "다시 기준"). */
+    val sniffRefDb: Double? = null,
 ) {
+    /** Highest finite level of the last completed sweep and its frequency (dB incl. offset). */
+    val peakNow: Pair<Double, Double>? get() {
+        val t = last ?: return null
+        val f = Analysis.peakFreq(t) ?: return null
+        return Analysis.levelAt(t, f, settings.offsetDb)?.let { it to f }
+    }
     /** Trace the markers and peak search read: Max Hold when on, else the live trace. */
     val shown: Trace? get() = if (settings.maxHold && hold != null) hold else live
 }
@@ -197,7 +207,9 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
             if (history.size > 3) history.removeAt(0)
             val results = Evaluate.run(cur.settings, trace, hold, cur.baseline, history.toList(), cur.internal)
             _state.update {
-                it.copy(live = trace, livePoints = trace.points, last = trace, hold = hold,
+                val ref = if (it.sniff && it.sniffRefDb == null && !trace.clipped)
+                    Analysis.peakFreq(trace)?.let { f -> Analysis.levelAt(trace, f, it.settings.offsetDb) } else it.sniffRefDb
+                it.copy(sniffRefDb = ref, live = trace, livePoints = trace.points, last = trace, hold = hold,
                     results = results, timing = trace.timing, sweeps = it.sweeps + 1, clipped = trace.clipped,
                     status = when {
                         trace.clipped -> "입력 클리핑 감지 · 이득을 낮추거나 감쇠기를 사용하세요"
@@ -330,6 +342,35 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun resetHold() = _state.update { it.copy(hold = null) }
+
+    /** Settings in use before near-field sniffing started, restored when it ends. */
+    private var beforeSniff: Settings? = null
+
+    /**
+     * Near-field sniffing like a handheld analyzer held at the connectors: the
+     * RX channel (at least 10 MHz) at the widest RBW, VBW = RBW (2 frames, no
+     * smoothing so bursts show), no Max Hold, high gain. Turning it off
+     * restores the previous settings.
+     */
+    fun toggleSniff() {
+        val st = _state.value
+        if (st.sniff) {
+            beforeSniff?.let { commit(it, clearTraces = true) }
+            beforeSniff = null
+            _state.update { it.copy(sniff = false, sniffRefDb = null) }
+            return
+        }
+        beforeSniff = st.settings
+        val b = st.settings.band ?: Band.B8
+        val span = maxOf(10.0, b.channelBwMhz).coerceAtMost(Settings(centerMhz = b.rxCenterMhz).maxSpanAtCenter())
+        val s = st.settings.withProfile(Mode.SPURIOUS, b).copy(centerMhz = b.rxCenterMhz, spanMhz = span,
+            rbwKhz = 54.0, vbwKhz = null, averages = 2, maxHold = false, gainStep = 12, thresholdDb = 10.0)
+        commit(s, clearTraces = true)
+        _state.update { it.copy(sniff = true, sniffRefDb = null) }
+    }
+
+    /** Take the current peak as the new starting level (e.g. at a known-good spot). */
+    fun resetSniffRef() = _state.update { it.copy(sniffRefDb = it.peakNow?.first) }
 
     /** Moves the segment centres (and back) to tell DC residue from a real signal at a DC bin. */
     fun toggleDcShift() {

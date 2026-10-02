@@ -160,6 +160,7 @@ private fun TopBar(
                 MenuItem("CSV 파일로 저장", state.last != null, close, onSaveCsv)
                 MenuItem("CSV 공유 (카톡 등)", state.last != null, close, onShareCsv)
                 MenuItem("빠른 설정 저장/불러오기", true, close, onPresets)
+                MenuItem(if (state.sniff) "근접 탐색 끄기 (이전 설정으로)" else "근접 탐색 (커넥터에 대고 찾기)", true, close, vm::toggleSniff)
                 HorizontalDivider()
                 MenuItem("동글 자체 신호 기록 (안테나 분리 상태)", state.last != null, close, vm::recordInternal)
                 MenuItem("동글 자체 신호 기록 삭제", state.internal != null, close, vm::clearInternal)
@@ -240,6 +241,7 @@ private fun InfoLine(state: UiState) {
         t?.let { tm -> state.last?.plan?.segments?.size?.takeIf { it > 0 }?.let { n ->
             "화면 갱신 ${(tm.totalMs.toDouble() / n).f(1)} ms마다 (${n}구간)" } },
         if (s.dcShift) "중심 이동 중" else null,
+        if (state.sniff) "근접 탐색" else null,
         state.device,
     )
     Text(parts.joinToString("  ·  "), color = Dim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -277,11 +279,42 @@ private fun ChartBox(state: UiState, vm: MeasureViewModel, modifier: Modifier) {
                 modifier = Modifier.align(Alignment.TopStart).padding(start = 56.dp, top = 6.dp)
                     .background(Color(0xCC0B0D12), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 3.dp))
         }
+        if (state.sniff) SniffReadout(state, vm, Modifier.align(Alignment.BottomCenter).padding(bottom = 34.dp))
         banner?.let { (text, color) ->
             Text(text, color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold,
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 40.dp)
                     .background(Color(0xCC0B0D12), RoundedCornerShape(6.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
         }
+    }
+}
+
+/** Large peak readout for near-field sniffing: where the level is highest and how much it rose. */
+@Composable
+private fun SniffReadout(state: UiState, vm: MeasureViewModel, modifier: Modifier) {
+    val now = state.peakNow
+    val ref = state.sniffRefDb
+    val rise = if (now != null && ref != null) now.first - ref else null
+    val color = when {
+        state.clipped -> Bad
+        rise == null -> Color.White
+        rise >= 10 -> Bad
+        rise >= 3 -> Warn
+        else -> Color.White
+    }
+    Row(modifier.clip(RoundedCornerShape(10.dp)).background(Color(0xDD0B0D12))
+        .padding(horizontal = 14.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column {
+            Text(now?.let { "${it.first.f(1)} dB" } ?: "—", color = color, fontSize = 30.sp, fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace)
+            Text(now?.let { "최고점 ${(it.second / 1e6).f(3)} MHz" } ?: "측정 중…", color = Dim, fontSize = 12.sp)
+        }
+        Column {
+            Text(rise?.let { "${signed(it)} dB" } ?: "—", color = color, fontSize = 24.sp, fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace)
+            Text(if (state.clipped) "입력 과다 · Gain 낮추기" else "시작 대비", color = if (state.clipped) Bad else Dim, fontSize = 12.sp)
+        }
+        Pill("다시 기준", enabled = now != null, onClick = vm::resetSniffRef)
     }
 }
 
