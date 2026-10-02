@@ -8,10 +8,10 @@ import os
 import sys
 import time
 
-from . import analysis, report
+from . import analysis, report, source
 from .dsp import noise_floor_db
-from .source import (DEFAULT_SAMPLE_RATE, RtlSdrSource, SimScenario,
-                     SimulatedSource)
+from .source import (DEFAULT_SAMPLE_RATE, V4_MAX_FREQ, RtlSdrSource,
+                     SimScenario, SimulatedSource)
 from .sweep import max_hold, sweep
 
 _SUFFIX = {"k": 1e3, "m": 1e6, "g": 1e9}
@@ -26,6 +26,12 @@ def freq(text: str) -> float:
 
 
 def open_source(args):
+    source.max_freq_hz = args.max_freq
+    if args.max_freq > V4_MAX_FREQ:
+        print(f"주의: {V4_MAX_FREQ/1e6:.0f} MHz 이상은 V4 규격 밖입니다. 감도가 "
+              "떨어지고, 동글에 따라 PLL이 잠기지 않을 수 있습니다. "
+              "'[R82XX] PLL not locked!' 메시지가 보이면 그 구간 결과는 "
+              "무효입니다.", file=sys.stderr)
     if args.sim is not None:
         scen = SimScenario.from_json(args.sim) if args.sim else None
         return SimulatedSource(scen, args.sample_rate)
@@ -241,6 +247,9 @@ def build_parser():
     g.add_argument("--ppm", type=int, default=0, help="주파수 오차 보정")
     g.add_argument("--device", type=int, default=0)
     g.add_argument("--bias-tee", action="store_true", help="LNA 전원 공급")
+    g.add_argument("--max-freq", type=freq, default=V4_MAX_FREQ,
+                   help="튜닝 상한 (기본 1766M = V4 규격). 1.8GHz UL 상단 "
+                        "(~1785M) 시도 시 1800M 등으로 지정")
     g.add_argument("--sample-rate", type=freq, default=DEFAULT_SAMPLE_RATE)
     g.add_argument("--nfft", type=int, default=2048,
                    help="FFT 크기 (RBW = sample_rate/nfft)")

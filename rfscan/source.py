@@ -14,11 +14,18 @@ V4_MAX_FREQ = 1766e6
 DEFAULT_SAMPLE_RATE = 2.4e6
 
 
+# Upper tuning limit actually enforced. Raised by --max-freq: many R828D
+# units still lock their PLL somewhat above 1766 MHz, but not guaranteed.
+max_freq_hz = V4_MAX_FREQ
+
+
 def check_range(freq_hz: float) -> None:
-    if not V4_MIN_FREQ <= freq_hz <= V4_MAX_FREQ:
+    if not V4_MIN_FREQ <= freq_hz <= max_freq_hz:
         raise ValueError(
-            f"{freq_hz/1e6:.3f} MHz는 RTL-SDR V4 수신 범위"
-            f"({V4_MIN_FREQ/1e6:.0f}~{V4_MAX_FREQ/1e6:.0f} MHz)를 벗어납니다")
+            f"{freq_hz/1e6:.3f} MHz는 수신 범위"
+            f"({V4_MIN_FREQ/1e6:.0f}~{max_freq_hz/1e6:.0f} MHz)를 벗어납니다"
+            + ("" if max_freq_hz > V4_MAX_FREQ else
+               ". 규격 밖 시도는 --max-freq 1800M 처럼 지정"))
 
 
 class RtlSdrSource:

@@ -28,11 +28,11 @@ RTL-SDR Blog V4 동글로 무선 설비 주변을 현장에서 1차 스크리닝
    | 대역 | 3GPP 범위 | V4로 측정 |
    |---|---|---|
    | LTE 900 MHz (B8) | DL 925–960 / UL 880–915 MHz | 가능 |
-   | LTE 1.8 GHz (B3) | DL 1805–1880 / UL 1710–1785 MHz | **UL 1710–1766만 가능**, DL 불가 |
+   | LTE 1.8 GHz (B3) | DL 1805–1880 / UL 1710–1785 MHz | **UL(기지국 RX) 1710–1766 가능**, 1766–1785는 `--max-freq`로 시도(규격 밖), DL 불가 |
    | LTE 2.1 GHz (B1) | DL 2110–2170 / UL 1920–1980 MHz | 불가 |
    | 5G 3.5 GHz (n78) | 3.3–3.8 GHz | 불가 |
 
-   1.8 GHz **상향(UL) 간섭** 감시에는 쓸 수 있습니다(기지국 수신 성능 저하의 주원인이
+   1.8 GHz **상향(UL, 기지국 RX) 간섭** 감시에는 쓸 수 있습니다(기지국 수신 성능 저하의 주원인이
    상향 간섭인 경우가 많습니다). DL·고조파를 보려면 다운컨버터를 쓰거나 다른 SDR(HackRF,
    Airspy, PlutoSDR 등)을 써야 합니다.
 4. **한 번에 보는 폭은 약 1.8 MHz입니다**(샘플레이트 2.4 MS/s의 중앙 75%). 그보다 넓은 구간은
@@ -119,6 +119,24 @@ python -m rfscan monitor --start 880M --stop 915M --baseline results/base_880_91
 `scan`만 해도 노이즈 플로어보다 `--threshold`(기본 10 dB) 이상 높은 신호를 모두 나열합니다.
 간섭원 방향을 찾을 때는 지향성 안테나(야기 등)를 돌려 가며 `snr` 또는 `scan`의 레벨 변화를
 비교하세요.
+
+### 2-1. 1.8 GHz 기지국 RX(상향) 대역 간섭
+기지국 RX 대역에는 단말 상향 신호가 수시로 섞이므로, 트래픽이 적은 시간(야간)에 기준 스캔을
+떠 두고, 그보다 계속 올라가 있는 구간(외부 간섭, 잡음 상승)을 찾는 방식이 효과적입니다.
+상향 신호처럼 순간적인 신호는 `--max-hold`, 상시 간섭은 평균(`--avg-sweeps`)으로 봅니다.
+```bash
+# 야간 기준 스캔 (평균 5회)
+python -m rfscan scan --start 1710M --stop 1766M --gain 30 --avg-sweeps 5 --tag ul18_base
+# 문제 시간대 비교 / 장시간 감시
+python -m rfscan compare --baseline results/ul18_base.csv --avg-sweeps 5
+python -m rfscan monitor --start 1710M --stop 1766M --baseline results/ul18_base.csv --interval 30
+# 규격 상한(1766 MHz) 위까지 시도 (동글마다 다름)
+python -m rfscan scan --start 1750M --stop 1785M --max-freq 1800M
+```
+`--max-freq`로 1766 MHz를 넘기면 감도가 떨어지고, 동글에 따라 PLL이 잠기지 않습니다.
+콘솔에 `[R82XX] PLL not locked!`가 찍히면 해당 구간 결과는 무효입니다. 먼저 본인 동글로
+`rtl_test -t` 및 알려진 신호로 잠김 여부를 확인하세요. 운용 중인 KT 상향 블록이 1766 MHz
+아래에 있다면 규격 안에서 측정할 수 있습니다.
 
 ### 3. SNR 간이 측정
 ```bash

@@ -122,3 +122,20 @@ def test_cli_end_to_end(tmp_path):
                  "--out", out, "--quiet"]) == 2
     for f in ("s.csv", "s.json", "s.png", "p.json", "p.png", "c.json"):
         assert (tmp_path / f).exists()
+
+
+def test_b3_uplink_and_max_freq(tmp_path):
+    from rfscan import source
+    out = str(tmp_path)
+    # 1.8 GHz UL below 1766 MHz works with default limits.
+    assert main(["scan", "--sim", "--start", "1720M", "--stop", "1760M",
+                 "--out", out, "--quiet", "--no-plot"]) == 0
+    # Above the V4 spec needs --max-freq.
+    assert main(["scan", "--sim", "--start", "1760M", "--stop", "1785M",
+                 "--out", out, "--quiet", "--no-plot"]) == 2
+    try:
+        assert main(["scan", "--sim", "--start", "1760M", "--stop", "1785M",
+                     "--max-freq", "1800M", "--out", out, "--quiet",
+                     "--no-plot"]) == 0
+    finally:
+        source.max_freq_hz = source.V4_MAX_FREQ
