@@ -63,7 +63,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val s0 = _state.value.settings
                 val r: Receiver = if (demo) SimReceiver(tuneDelayMs = 4) else {
-                    val io = UsbAccess.open(getApplication())
+                    val io = UsbAccess.open(getApplication<Application>())
                     usb = io
                     RtlSdr.open(io, fastTune = s0.fastTune, gainStep = s0.gainStep)
                 }
