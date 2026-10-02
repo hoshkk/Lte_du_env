@@ -87,12 +87,14 @@ fun MainScreen(state: UiState, vm: MeasureViewModel, onSaveCsv: () -> Unit, onSh
         InfoLine(state)
         BoxWithConstraints(Modifier.fillMaxWidth().weight(1f).padding(top = 2.dp)) {
             val wide = maxWidth > maxHeight
+            val panelWidth = if (maxWidth > 900.dp) 260.dp else 220.dp
+            val panelHeight = maxHeight * 0.36f
             if (wide) {
                 Row(Modifier.fillMaxSize()) {
                     ChartBox(state, vm, Modifier.weight(1f).fillMaxHeight())
                     if (showPanel) {
                         Spacer(Modifier.width(6.dp))
-                        ResultPanel(state, vm, Modifier.width(if (maxWidth > 900.dp) 260.dp else 220.dp).fillMaxHeight())
+                        ResultPanel(state, vm, Modifier.width(panelWidth).fillMaxHeight())
                     }
                 }
             } else {
@@ -100,7 +102,7 @@ fun MainScreen(state: UiState, vm: MeasureViewModel, onSaveCsv: () -> Unit, onSh
                     ChartBox(state, vm, Modifier.fillMaxWidth().weight(1f))
                     if (showPanel) {
                         Spacer(Modifier.height(6.dp))
-                        ResultPanel(state, vm, Modifier.fillMaxWidth().height(maxHeight * 0.36f))
+                        ResultPanel(state, vm, Modifier.fillMaxWidth().height(panelHeight))
                     }
                 }
             }
