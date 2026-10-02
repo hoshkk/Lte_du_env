@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -47,8 +48,9 @@ private const val RIGHT = 8f
 
 /**
  * Spectrum display, Y from refLevel down 10 divisions; drawn levels are dBFS + offset.
- * Gestures: tap places the selected marker, one-finger vertical drag moves Ref,
- * two-finger pinch changes Span (applied on release, centre fixed).
+ * Gestures: tap places the selected marker, double tap fits Ref/scale to the trace,
+ * one-finger vertical drag moves Ref, two-finger pinch changes Span (applied on
+ * release, centre fixed).
  */
 @Composable
 fun SpectrumChart(
@@ -66,6 +68,7 @@ fun SpectrumChart(
     markers: List<Marker>,
     selectedMarker: Int,
     onTap: (Double) -> Unit,
+    onDoubleTap: () -> Unit,
     onRefDrag: (Double) -> Unit,
     onRefDragEnd: () -> Unit,
     onPinch: (Float) -> Unit,
@@ -75,6 +78,8 @@ fun SpectrumChart(
     val f0 = plan?.startHz ?: startHz
     val f1 = plan?.stopHz ?: stopHz
     val tap by rememberUpdatedState(onTap)
+    val doubleTap by rememberUpdatedState(onDoubleTap)
+    val lastTap = remember { longArrayOf(0L) }
     val drag by rememberUpdatedState(onRefDrag)
     val dragEnd by rememberUpdatedState(onRefDragEnd)
     val pinch by rememberUpdatedState(onPinch)
@@ -109,6 +114,9 @@ fun SpectrumChart(
                 pinched -> if (abs(zoom - 1f) > 0.05f) pinch(zoom)
                 dragged -> dragEnd()
                 else -> {
+                    val now = System.currentTimeMillis()
+                    if (now - lastTap[0] < 350) { lastTap[0] = 0L; doubleTap(); return@awaitEachGesture }
+                    lastTap[0] = now
                     val w = (size.width - LEFT - RIGHT).coerceAtLeast(1f)
                     val frac = ((down.position.x - LEFT) / w).coerceIn(0f, 1f)
                     val (a, b) = range
@@ -138,7 +146,8 @@ fun SpectrumChart(
             drawLine(ChartColors.grid, Offset(LEFT, yy), Offset(LEFT + w, yy))
             val xx = LEFT + w * i / 10
             drawLine(ChartColors.grid, Offset(xx, TOP), Offset(xx, TOP + h))
-            if (i % 2 == 0) nc.drawText("%.0f".format(refLevelDb - i * dbPerDiv), 2f, yy + 8f, text)
+            // Bottom label sits above its line so it does not collide with the frequency labels.
+            if (i % 2 == 0) nc.drawText("%.0f".format(refLevelDb - i * dbPerDiv), 2f, if (i == 10) yy - 4f else yy + 8f, text)
         }
         if (f1 <= f0) return@Canvas
         for (i in listOf(0, 5, 10)) {

@@ -133,7 +133,7 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
                                 }
                             }
                             Field("Offset (dB)", offset, { offset = it })
-                            Text("Ref는 축 위치만 바꿉니다(그래프를 위아래로 끌어도 됩니다). Offset은 표시 레벨에 더합니다: 원본 -70 + Offset 10 = -60. " +
+                            Text("Ref는 축 위치만 바꿉니다(그래프를 위아래로 끌거나, 두 번 탭하면 자동으로 맞춥니다). Offset은 표시 레벨에 더합니다: 원본 -70 + Offset 10 = -60. " +
                                 "커플러·케이블 손실 등 알고 있는 값만 넣으세요. Offset으로 dBm 교정이 되지는 않습니다.", fontSize = 11.sp, color = Dim)
                         }
                         2 -> {

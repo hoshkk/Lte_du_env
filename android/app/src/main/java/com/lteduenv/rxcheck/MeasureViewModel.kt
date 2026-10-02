@@ -245,6 +245,14 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
     private fun baselineKeyChanged(a: Settings?, b: Settings) =
         a == null || a.gainStep != b.gainStep || a.narrowIf != b.narrowIf || a.dcPatch != b.dcPatch
 
+    /** Double tap on the graph: fit Ref and dB/div to what is on screen. Gain is not touched. */
+    fun autoScale() {
+        val st = _state.value
+        val t = st.shown ?: return
+        val d = AutoFit.decide(listOf(t), null, st.settings.offsetDb) ?: return
+        commit(st.settings.copy(refLevelDb = d.refLevelDb, dbPerDiv = d.dbPerDiv), clearTraces = false)
+    }
+
     fun stop() {
         job?.cancel()
     }

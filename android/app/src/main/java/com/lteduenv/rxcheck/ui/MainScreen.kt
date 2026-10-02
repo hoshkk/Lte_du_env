@@ -249,7 +249,8 @@ private fun ChartBox(state: UiState, vm: MeasureViewModel, modifier: Modifier) {
             channelHz = s.channelHz(),
             peaks = state.results?.externalPeaks ?: emptyList(),
             markers = state.markers, selectedMarker = state.selectedMarker,
-            onTap = vm::placeMarker, onRefDrag = vm::dragRef, onRefDragEnd = vm::commitRef, onPinch = vm::zoomSpan,
+            onTap = vm::placeMarker, onDoubleTap = vm::autoScale,
+            onRefDrag = vm::dragRef, onRefDragEnd = vm::commitRef, onPinch = vm::zoomSpan,
             modifier = Modifier.fillMaxSize(),
         )
         val banner = when {
@@ -258,9 +259,16 @@ private fun ChartBox(state: UiState, vm: MeasureViewModel, modifier: Modifier) {
             state.error == null && state.status.startsWith("USB 재연결") -> state.status to Warn
             else -> null
         }
+        state.markers.firstOrNull { it.index == state.selectedMarker }?.freqHz?.let { f ->
+            val v = state.shown?.let { Analysis.levelAt(it, f, s.offsetDb) }
+            Text("M${state.selectedMarker}  ${(f / 1e6).f(4)} MHz  ${v?.f(1) ?: "—"} dB",
+                color = ChartColors.marker, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace,
+                modifier = Modifier.align(Alignment.TopStart).padding(start = 56.dp, top = 6.dp)
+                    .background(Color(0xCC0B0D12), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 3.dp))
+        }
         banner?.let { (text, color) ->
             Text(text, color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp)
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 40.dp)
                     .background(Color(0xCC0B0D12), RoundedCornerShape(6.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
         }
     }
@@ -279,18 +287,13 @@ private fun BottomBar(state: UiState, vm: MeasureViewModel, showPanel: Boolean, 
             }
             Pill("Peak", enabled = state.shown != null, onClick = vm::markerToPeak)
             Pill("Clear", onClick = vm::clearMarker)
-            state.markers.firstOrNull { it.index == state.selectedMarker }?.freqHz?.let { f ->
-                val v = state.shown?.let { Analysis.levelAt(it, f, s.offsetDb) }
-                Text("M${state.selectedMarker}  ${(f / 1e6).f(4)} MHz  ${v?.f(1) ?: "—"} dB",
-                    color = ChartColors.marker, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-            }
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(6.dp))
             Toggle("Max Hold", s.maxHold, vm::toggleHold)
             Pill("초기화", enabled = s.maxHold, onClick = vm::resetHold)
             Toggle("Ch Power", s.channelPower, vm::toggleChannelPower)
         }
         Spacer(Modifier.width(6.dp))
-        Pill(if (showPanel) "결과 숨기기 ▸" else "◂ 결과 보기", onClick = onTogglePanel)
+        Pill(if (showPanel) "결과 ▸" else "◂ 결과", onClick = onTogglePanel)
     }
 }
 
