@@ -232,7 +232,7 @@ private fun InfoLine(state: UiState) {
         // Full-span completion time vs. how often the screen gets new data (every segment).
         t?.let { "SPAN 완료 ${it.totalMs} ms (${if (it.totalMs > 0) (1000.0 / it.totalMs).f(1) else "-"}회/s)" },
         t?.let { tm -> state.last?.plan?.segments?.size?.takeIf { it > 0 }?.let { n ->
-            "화면 갱신 ${(tm.totalMs.toDouble() / n).f(1)} ms마다 ($n구간)" } },
+            "화면 갱신 ${(tm.totalMs.toDouble() / n).f(1)} ms마다 (${n}구간)" } },
         if (s.dcShift) "중심 이동 중" else null,
         state.device,
     )
