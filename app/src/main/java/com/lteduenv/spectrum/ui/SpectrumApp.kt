@@ -90,6 +90,7 @@ fun SpectrumApp(vm:SpectrumViewModel=viewModel()) {
     val cp=remember(s.completeFrame,s.config.centerMhz,s.config.integrationBwMhz,s.config.channelPowerEnabled){
         if(s.config.channelPowerEnabled)Measurements.channelPower(s.completeFrame,s.config.centerMhz,s.config.integrationBwMhz)else null
     }
+    val verdict=remember(frame,s.selectedMode){SpectrumAnalysis.summarize(frame,s.selectedMode)}
     Column(Modifier.fillMaxSize().padding(6.dp)) {
         Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
             Button(enabled=!s.running && !opening,colors=ButtonDefaults.buttonColors(
@@ -134,6 +135,7 @@ fun SpectrumApp(vm:SpectrumViewModel=viewModel()) {
             Text("동조 내부: RF 설정 ${t[6]/1_000_000} · PLL ${t[7]/1_000_000} ms",fontSize=10.sp)
             Text("동조 USB: 쓰기 ${t[8]/1_000_000} ms/${t[11]}회 · 읽기 ${t[9]/1_000_000} ms/${t[12]}회 · 기타 ${t[10]/1_000_000} ms/${t[13]}회",fontSize=10.sp,maxLines=2)
         }
+        verdict?.let{Text(it.text,color=if(it.anomaly)AnalyzerColors.Warn else AnalyzerColors.TextSecondary,fontSize=11.sp,maxLines=2)}
         if(s.message.isNotBlank())Text(s.message,color=AnalyzerColors.TextPrimary,fontSize=11.sp,maxLines=1)
     }
     if(profileDialog)AlertDialog(onDismissRequest={profileDialog=false},title={Text("빠른 설정 저장/관리")},text={
