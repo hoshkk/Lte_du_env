@@ -82,8 +82,17 @@ class Store(context: Context) {
         "%d_%d_%d_%d_g%s_if%s_dc%s".format(p.startHz.toLong(), p.binHz.toLong(), p.points, p.sampleRate,
             s.gainStep?.toString() ?: "agc", if (s.narrowIf) "n" else "w", if (s.dcPatch) "1" else "0")
 
-    fun saveBaseline(t: Trace, s: Settings) {
-        DataOutputStream(File(dir, key(t.plan, s)).outputStream().buffered()).use { out ->
+    fun saveBaseline(t: Trace, s: Settings) = saveTrace("", t, s)
+    fun loadBaseline(plan: SweepPlan, s: Settings) = loadTrace("", plan, s)
+    fun deleteBaseline(plan: SweepPlan, s: Settings) { File(dir, key(plan, s)).delete() }
+
+    /** No-input recording of the dongle's own spurs (antenna removed or 50 ohm load). */
+    fun saveInternal(t: Trace, s: Settings) = saveTrace(INTERNAL, t, s)
+    fun loadInternal(plan: SweepPlan, s: Settings) = loadTrace(INTERNAL, plan, s)
+    fun deleteInternal(plan: SweepPlan, s: Settings) { File(dir, INTERNAL + key(plan, s)).delete() }
+
+    private fun saveTrace(prefix: String, t: Trace, s: Settings) {
+        DataOutputStream(File(dir, prefix + key(t.plan, s)).outputStream().buffered()).use { out ->
             out.writeLong(System.currentTimeMillis())
             out.writeDouble(t.enbwHz)
             out.writeInt(t.points)
@@ -91,9 +100,9 @@ class Store(context: Context) {
         }
     }
 
-    /** Baseline for exactly this plan and level-affecting settings, or null. */
-    fun loadBaseline(plan: SweepPlan, s: Settings): Pair<Trace, Long>? {
-        val f = File(dir, key(plan, s))
+    /** Trace stored for exactly this plan and level-affecting settings, or null. */
+    private fun loadTrace(prefix: String, plan: SweepPlan, s: Settings): Pair<Trace, Long>? {
+        val f = File(dir, prefix + key(plan, s))
         if (!f.exists()) return null
         return runCatching {
             DataInputStream(f.inputStream().buffered()).use { inp ->
@@ -107,5 +116,7 @@ class Store(context: Context) {
         }.getOrNull()
     }
 
-    fun deleteBaseline(plan: SweepPlan, s: Settings) { File(dir, key(plan, s)).delete() }
+    private companion object {
+        const val INTERNAL = "internal_"
+    }
 }

@@ -40,7 +40,7 @@ object ChartColors {
     val markerOther = Color(0xFF4C8DFF)
 }
 
-private const val LEFT = 56f
+private const val LEFT = 48f
 private const val TOP = 8f
 private const val BOTTOM = 30f
 private const val RIGHT = 8f
@@ -157,6 +157,22 @@ fun SpectrumChart(
             val px = x(p.freqHz); val py = y(p.levelDb)
             drawPath(Path().apply { moveTo(px, py - 4f); lineTo(px - 7f, py - 16f); lineTo(px + 7f, py - 16f); close() }, ChartColors.peak)
         }
+        // Legend (top right): only the traces actually drawn.
+        val legend = listOfNotNull(
+            live?.let { "현재" to ChartColors.live },
+            hold?.takeIf { it.plan == plan }?.let { "Max Hold" to ChartColors.hold },
+            baseline?.takeIf { it.plan == plan }?.let { "기준" to ChartColors.baseline },
+        )
+        var lx = LEFT + w - 8f
+        for ((label, color) in legend.reversed()) {
+            val tw = text.measureText(label)
+            lx -= tw
+            text.color = color.toArgb()
+            nc.drawText(label, lx, TOP + 24f, text)
+            drawLine(color, Offset(lx - 22f, TOP + 16f), Offset(lx - 6f, TOP + 16f), 3f)
+            lx -= 40f
+        }
+        text.color = ChartColors.axisText.toArgb()
         val shown = hold?.takeIf { it.plan == plan } ?: live
         for (m in markers) {
             val f = m.freqHz ?: continue

@@ -51,6 +51,8 @@ data class UiState(
     val hold: Trace? = null,
     val baseline: Trace? = null,
     val baselineTime: Long? = null,
+    /** No-input recording of the dongle's own spurs for the current plan. */
+    val internal: Trace? = null,
     val results: Results? = null,
     val timing: SweepTiming? = null,
     val sweeps: Int = 0,
@@ -135,6 +137,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
         var plan: SweepPlan? = null
         val ctx = currentCoroutineContext()
         val fitTraces = ArrayList<Trace>()
+        val history = ArrayList<Trace>()
         var reductions = 0
         while (ctx.isActive) {
             val s = _state.value.settings
@@ -150,8 +153,10 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
             if (p != plan || baselineKeyChanged(applied, s)) {
                 if (p != plan) _state.update { it.copy(live = null, last = null, hold = null, results = null) }
                 plan = p
+                history.clear()
                 val base = store.loadBaseline(p, s)
-                _state.update { it.copy(baseline = base?.first, baselineTime = base?.second) }
+                val internal = store.loadInternal(p, s)?.first
+                _state.update { it.copy(baseline = base?.first, baselineTime = base?.second, internal = internal) }
             }
             applied = s
             val prev = _state.value.last
@@ -169,7 +174,9 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
             val cur = _state.value
             if (cur.settings.captureKey() != s.captureKey()) continue // changed mid-sweep; discard
             val hold = if (cur.settings.maxHold) Analysis.maxHold(cur.hold, trace) else null
-            val results = Evaluate.run(cur.settings, trace, hold, cur.baseline)
+            history += trace
+            if (history.size > 3) history.removeAt(0)
+            val results = Evaluate.run(cur.settings, trace, hold, cur.baseline, history.toList(), cur.internal)
             _state.update {
                 it.copy(live = trace, livePoints = trace.points, last = trace, hold = hold,
                     results = results, timing = trace.timing, sweeps = it.sweeps + 1, clipped = trace.clipped,
@@ -268,7 +275,11 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(settings = it.settings.copy(refLevelDb = (it.settings.refLevelDb + deltaDb).coerceIn(-200.0, 100.0))) }
     }
 
-    fun commitRef() = store.saveSettings(_state.value.settings)
+    /** End of a Ref drag: snap to whole dB and persist. */
+    fun commitRef() {
+        _state.update { it.copy(settings = it.settings.copy(refLevelDb = Math.round(it.settings.refLevelDb).toDouble())) }
+        store.saveSettings(_state.value.settings)
+    }
 
     /** Pinch: span / factor around the same centre, inside the receiver range. */
     fun zoomSpan(factor: Float) {
@@ -344,6 +355,24 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(baseline = null, baselineTime = null) }
     }
 
+    /**
+     * Records the current sweep as the dongle's own spurs. Do this with the
+     * antenna disconnected (or a 50 ohm load) at the same span, RBW and gain.
+     */
+    fun recordInternal() {
+        val st = _state.value
+        val t = st.last ?: run { _state.update { it.copy(status = "완료된 스윕이 없습니다") }; return }
+        store.saveInternal(t, st.settings)
+        _state.update { it.copy(internal = t, status = "동글 자체 신호 기록됨 (같은 Span·RBW·이득에서 적용)") }
+    }
+
+    fun clearInternal() {
+        val st = _state.value
+        val t = st.last ?: st.internal ?: return
+        store.deleteInternal(t.plan, st.settings)
+        _state.update { it.copy(internal = null, status = "동글 자체 신호 기록 삭제") }
+    }
+
     fun dismissError() = _state.update { it.copy(error = null) }
 
     // ---- export --------------------------------------------------------------------
@@ -366,11 +395,12 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
                 "fast_tune=${s.fastTune}; settle_ms=${s.settleMs}; offset_db=${s.offsetDb}; clipping=${fmt("%.5f", t.clippedFraction)}; " +
                 "sweep_ms=${t.timing?.totalMs ?: ""}; device=${st.device ?: ""}; unit=dBFS+offset (상대값)\n")
             st.results?.let { r ->
+                append("# verdict=${r.verdict.title}; reasons=${r.verdict.reasons.joinToString(" | ")}\n")
                 r.channel?.let { append("# channel_power_db=${fmt("%.2f", it.totalDb)}; psd_db_per_mhz=${fmt("%.2f", it.psdDbPerMhz)}\n") }
                 r.riseDb?.let { append("# rise_vs_baseline_db=${fmt("%.2f", it)}\n") }
                 for (b in r.blocks) append("# block ${fmt("%.3f", b.startHz / 1e6)}-${fmt("%.3f", b.stopHz / 1e6)} MHz psd=${fmt("%.2f", b.psdDbPerMhz)} above_median=${fmt("%.2f", b.aboveMedianDb)}" +
                     (b.riseDb?.let { " rise=${fmt("%.2f", it)}" } ?: "") + "\n")
-                for (p in r.peaks) append("# peak ${fmt("%.4f", p.freqHz / 1e6)} MHz level=${fmt("%.2f", p.levelDb)} above_floor=${fmt("%.2f", p.aboveFloorDb)} bw10=${fmt("%.0f", p.bw10dBHz)} in_channel=${p.inChannel}\n")
+                for (p in r.peaks) append("# peak ${fmt("%.4f", p.freqHz / 1e6)} MHz level=${fmt("%.2f", p.levelDb)} above_floor=${fmt("%.2f", p.aboveFloorDb)} bw10=${fmt("%.0f", p.bw10dBHz)} in_channel=${p.inChannel} origin=${p.origin.name} seen=${p.seenSweeps}\n")
             }
             val shown = st.shown
             for (m in st.markers) m.freqHz?.let { f ->

@@ -22,12 +22,24 @@ data class Block(
     val riseDb: Double?,
 )
 
+/** Where a detected emission most likely comes from. */
+enum class Origin(val label: String) {
+    EXTERNAL("외부 신호"),
+    /** At a harmonic of the dongle's 28.8 MHz reference crystal. */
+    DONGLE_XTAL("동글 자체 (28.8 MHz 배수)"),
+    /** Also present in the no-input recording of this dongle. */
+    DONGLE_RECORDED("동글 자체 (무입력 기록)"),
+}
+
 data class Peak(
     val freqHz: Double,
     val levelDb: Double,
     val aboveFloorDb: Double,
     val bw10dBHz: Double,
     val inChannel: Boolean,
+    val origin: Origin = Origin.EXTERNAL,
+    /** In how many of the recent sweeps this peak was seen. */
+    val seenSweeps: Int = 1,
 )
 
 object Analysis {
@@ -117,6 +129,41 @@ object Analysis {
             i = end + 1
         }
         return out.sortedByDescending { it.levelDb }.take(maxCount)
+    }
+
+    /** Harmonics of the RTL-SDR reference crystal show up as internal spurs. */
+    const val XTAL_HZ = 28_800_000.0
+
+    fun nearXtalHarmonic(freqHz: Double, tolHz: Double): Boolean {
+        val n = Math.round(freqHz / XTAL_HZ)
+        return n >= 1 && kotlin.math.abs(freqHz - n * XTAL_HZ) <= tolHz
+    }
+
+    fun xtalHarmonicsIn(startHz: Double, stopHz: Double): List<Double> {
+        val first = kotlin.math.ceil(startHz / XTAL_HZ).toLong()
+        val last = kotlin.math.floor(stopHz / XTAL_HZ).toLong()
+        return (first..last).map { it * XTAL_HZ }
+    }
+
+    /**
+     * Copy of [t] with the bins within [halfWidthHz] of each frequency replaced by
+     * the median of the bins just outside, so a known internal spur does not
+     * inflate channel or block power.
+     */
+    fun maskBins(t: Trace, freqsHz: List<Double>, halfWidthHz: Double): Trace {
+        if (freqsHz.isEmpty()) return t
+        val v = t.levelsDb.copyOf()
+        val half = max(1, kotlin.math.ceil(halfWidthHz / t.plan.binHz).toInt())
+        for (f in freqsHz) {
+            val c = Math.round((f - t.plan.startHz) / t.plan.binHz).toInt()
+            if (c < -half || c >= t.points + half) continue
+            val ring = ((c - 3 * half)..(c - half - 1)) + ((c + half + 1)..(c + 3 * half))
+            val ref = ring.filter { it in 0 until t.points && t.levelsDb[it].isFinite() }.map { t.levelsDb[it] }.sorted()
+            if (ref.isEmpty()) continue
+            val m = ref[ref.size / 2]
+            for (i in (c - half)..(c + half)) if (i in 0 until t.points) v[i] = m
+        }
+        return Trace(t.plan, v, t.enbwHz, t.completedSegments, t.unlockedSegments, t.timing, t.timestampMs, t.clippedFraction)
     }
 
     /** Level at a frequency (nearest bin), dB incl. offset; null outside the trace. */

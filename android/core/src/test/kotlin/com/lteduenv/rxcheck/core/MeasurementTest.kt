@@ -133,14 +133,15 @@ class MeasurementTest {
         val tr = SweepEngine(sim).sweep(SweepPlan.create(rev.centerMhz * 1e6, rev.spanMhz * 1e6, rev.rbwKhz * 1e3), rev.averages)!!
         val r = com.lteduenv.rxcheck.core.analysis.Evaluate.run(rev, tr, null, null)
         assertNotNull(r.channel)
-        assertTrue(r.alarms >= 1)
+        assertEquals(com.lteduenv.rxcheck.core.analysis.Level.ALERT, r.verdict.level)
         assertTrue(r.blocks.any { 906.1e6 in it.startHz..it.stopHz && it.aboveMedianDb > rev.thresholdDb })
 
         val sp = Settings().withProfile(Mode.SPURIOUS, Band.B8)
         val ts = SweepEngine(sim).sweep(SweepPlan.create(sp.centerMhz * 1e6, sp.spanMhz * 1e6, sp.rbwKhz * 1e3), sp.averages)!!
         val q = com.lteduenv.rxcheck.core.analysis.Evaluate.run(sp, ts, ts, null)
-        assertTrue(q.peaks.any { abs(it.freqHz - 918.4e6) < 30e3 && !it.inChannel })
-        assertEquals(q.peaks.size, q.alarms)
+        assertTrue(q.externalPeaks.any { abs(it.freqHz - 918.4e6) < 30e3 && !it.inChannel })
+        // One sweep only: peaks are listed but the verdict waits for confirmation.
+        assertEquals(com.lteduenv.rxcheck.core.analysis.Level.HOLD, q.verdict.level)
     }
 
     private fun Double.pow(e: Double) = Math.pow(this, e)
