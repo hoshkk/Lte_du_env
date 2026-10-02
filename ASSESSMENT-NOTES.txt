@@ -1,0 +1,7 @@
+Signal assessment prototype based on SpectrumCheck 2.6.5.
+Rules only; no trained AI or fault verdict. No speed/driver changes.
+Complete raw sweep assessment, narrow peak screening, per-bin median change versus a session baseline.
+Baseline incompatible with changed acquisition conditions; cleared on configuration, start and reconnect.
+Thresholds (10 dB peak; 6 dB across 70% of bins) are heuristics, not validated KT fault limits.
+12 pure Kotlin assessment cases compiled and passed. Android APK/UI integration not built or hardware tested.
+Baseline applies to full observed span, not only configured integration bandwidth. Traffic and input chain changes can change results.
