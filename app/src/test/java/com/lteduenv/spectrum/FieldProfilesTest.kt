@@ -22,7 +22,7 @@ class FieldProfilesTest {
     }
     @Test fun savedProfilesRoundTripEveryManualSetting() {
         val p=FieldProfile(SweepConfig(centerMhz=1745.0,spanMhz=25.0,refLevelDb=-35.0,
-            manualGainLevel=7,removeDc=true,refLevelOffsetDb=43.0,rbwKhz=30.0,vbwKhz=0.5,
+            fastUsbTune=false,manualGainLevel=7,removeDc=true,refLevelOffsetDb=43.0,rbwKhz=30.0,vbwKhz=0.5,
             integrationBwMhz=20.0,channelPowerEnabled=true,autoGain=false,dbPerDiv=5.0),true)
         assertEquals(p,FieldProfiles.decode(FieldProfiles.encode(p)))
     }

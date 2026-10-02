@@ -27,6 +27,7 @@ data class SweepConfig(
     val dbPerDiv:Double=10.0,
     val tuneSettleMs:Int=80,
     val nativeSettleMs:Int=10,
+    val fastUsbTune:Boolean=true,
 )
 data class SpectrumFrame(
     val startMhz:Double,

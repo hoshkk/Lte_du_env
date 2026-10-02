@@ -125,6 +125,8 @@ struct rtlsdr_dev {
 	char manufact[256];
 	char product[256];
 	int force_bt;
+	int spectrum_fast_gate;
+	int spectrum_gate_open;
 };
 
 void rtlsdr_set_gpio_bit(rtlsdr_dev_t *dev, uint8_t gpio, int val);
@@ -619,7 +621,9 @@ void rtlsdr_set_gpio_output(rtlsdr_dev_t *dev, uint8_t gpio)
 
 void rtlsdr_set_i2c_repeater(rtlsdr_dev_t *dev, int on)
 {
-	rtlsdr_demod_write_reg(dev, 1, 0x01, on ? 0x18 : 0x10, 1);
+	dev->spectrum_gate_open = 0;
+	if (rtlsdr_demod_write_reg(dev, 1, 0x01, on ? 0x18 : 0x10, 1) == 0)
+		dev->spectrum_gate_open = on ? 1 : 0;
 }
 
 int rtlsdr_set_fir(rtlsdr_dev_t *dev)
@@ -926,6 +930,20 @@ int rtlsdr_read_eeprom(rtlsdr_dev_t *dev, uint8_t *data, uint8_t offset, uint16_
 	return r;
 }
 
+/* Enabled only after initialization; each device starts with an unknown/closed gate.
+ * Keep all PLL operations, lock verification and IQ settling unchanged. */
+int spectrum_set_fast_gate(rtlsdr_dev_t *dev, int enabled)
+{
+    if (!dev) return -1;
+    if (!enabled && dev->spectrum_gate_open) {
+        dev->spectrum_gate_open = 0;
+        int rc = rtlsdr_demod_write_reg(dev, 1, 0x01, 0x10, 1);
+        if (rc < 0) return rc;
+    }
+    dev->spectrum_fast_gate = enabled != 0;
+    return 0;
+}
+
 int rtlsdr_set_center_freq(rtlsdr_dev_t *dev, uint32_t freq)
 {
 	int r = -1;
@@ -936,30 +954,18 @@ int rtlsdr_set_center_freq(rtlsdr_dev_t *dev, uint32_t freq)
 	if (dev->direct_sampling) {
 		r = rtlsdr_set_if_freq(dev, freq);
 	} else if (dev->tuner && dev->tuner->set_freq) {
-		rtlsdr_set_i2c_repeater(dev, 1);
-		r = dev->tuner->set_freq(dev, freq - dev->offs_freq);
-		rtlsdr_set_i2c_repeater(dev, 0);
-	}
-
-	if (!r)
-		dev->freq = freq;
-	else
-		dev->freq = 0;
-
-	return r;
-}
-
-int rtlsdr_set_center_freq_no_repeater_toggle(rtlsdr_dev_t *dev, uint32_t freq)
-{
-	int r = -1;
-
-	if (!dev || !dev->tuner)
-		return -1;
-
-	if (dev->direct_sampling) {
-		r = rtlsdr_set_if_freq(dev, freq);
-	} else if (dev->tuner && dev->tuner->set_freq) {
-		r = dev->tuner->set_freq(dev, freq - dev->offs_freq);
+		if (!dev->spectrum_fast_gate || !dev->spectrum_gate_open) {
+            dev->spectrum_gate_open = 0;
+            r = rtlsdr_demod_write_reg(dev, 1, 0x01, 0x18, 1);
+            if (r < 0) { dev->freq = 0; return r; }
+            dev->spectrum_gate_open = 1;
+        }
+        r = dev->tuner->set_freq(dev, freq - dev->offs_freq);
+        if (!dev->spectrum_fast_gate || r < 0) {
+            dev->spectrum_gate_open = 0;
+            int gate_rc = rtlsdr_demod_write_reg(dev, 1, 0x01, 0x10, 1);
+            if (!r && gate_rc < 0) r = gate_rc;
+        }
 	}
 
 	if (!r)

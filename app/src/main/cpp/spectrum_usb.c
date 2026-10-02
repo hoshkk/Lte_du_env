@@ -11,6 +11,7 @@
 #include "rtl-sdr.h"
 #include "rtl-sdr-android.h"
 
+extern int spectrum_set_fast_gate(rtlsdr_dev_t *dev,int enabled);
 static void fail(JNIEnv *e,const char *s){(*e)->ThrowNew(e,(*e)->FindClass(e,"java/io/IOException"),s);}
 static int reset_once(void *d){return rtlsdr_reset_buffer((rtlsdr_dev_t*)d);}
 static void retry_pause(void){struct timespec ts={0,5000000L};nanosleep(&ts,0);}
@@ -24,7 +25,7 @@ static int reset_checked(JNIEnv *e,rtlsdr_dev_t *d){
  }
  return 1;
 }
-JNIEXPORT jlong JNICALL Java_com_lteduenv_spectrum_data_sdr_NativeRtl_open(JNIEnv *e,jobject o,jint fd,jstring path,jboolean agc,jint gain){
+JNIEXPORT jlong JNICALL Java_com_lteduenv_spectrum_data_sdr_NativeRtl_open(JNIEnv *e,jobject o,jint fd,jstring path,jboolean agc,jint gain,jboolean fast){
  const char *p=(*e)->GetStringUTFChars(e,path,0);rtlsdr_dev_t *d=0;
  int rc=rtlsdr_open2(&d,fd,p);(*e)->ReleaseStringUTFChars(e,path,p);
  if(rc<0 || !d){char msg[192];snprintf(msg,sizeof(msg),"USB 열기 실패 (코드 %d). SDR Driver를 종료하고 OTG를 다시 연결하세요",rc);fail(e,msg);return 0;}
@@ -34,10 +35,7 @@ JNIEXPORT jlong JNICALL Java_com_lteduenv_spectrum_data_sdr_NativeRtl_open(JNIEn
     rtlsdr_set_tuner_gain_mode(d,agc?0:1)<0 || (!agc && rtlsdr_set_tuner_gain(d,gain)<0)){
    rtlsdr_close(d);fail(e,"USB 수신 설정 실패");return 0;
  }
- /* Hold the I2C repeater open for the life of the session instead of
-  * toggling it around every single retune (NativeRtl_tune uses the
-  * no-toggle variant). rtlsdr_close() closes it again on teardown. */
- rtlsdr_set_i2c_repeater(d,1);
+ if(spectrum_set_fast_gate(d,fast?1:0)<0){rtlsdr_close(d);fail(e,"USB 동조 모드 설정 실패");return 0;}
  return (jlong)(intptr_t)d;
 }
 extern void spectrum_profile_begin(void);
@@ -49,7 +47,7 @@ JNIEXPORT jlongArray JNICALL Java_com_lteduenv_spectrum_data_sdr_NativeRtl_tune(
  if(!d || settle<0 || settle>1000){fail(e,"잘못된 USB 주파수 설정");return NULL;}
  jlong t0=clock_ns();
  spectrum_profile_begin();
- int tune_rc=rtlsdr_set_center_freq_no_repeater_toggle(d,(uint32_t)hz);
+ int tune_rc=rtlsdr_set_center_freq(d,(uint32_t)hz);
  int64_t stats[8]; spectrum_profile_end(stats);
  if(tune_rc<0){fail(e,"주파수 동조 실패 / PLL 잠금 확인 실패");return NULL;}
  jlong t1=clock_ns();

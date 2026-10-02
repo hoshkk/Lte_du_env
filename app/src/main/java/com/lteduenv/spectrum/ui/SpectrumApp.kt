@@ -133,7 +133,7 @@ fun SpectrumApp(vm:SpectrumViewModel=viewModel()) {
             Text("완료 스윕: 동조 ${t[0]/1_000_000} · 대기 ${t[1]/1_000_000} · 초기화 ${t[2]/1_000_000} · 폐기 ${t[3]/1_000_000} · 수신 ${t[4]/1_000_000} · 연산 ${t[5]/1_000_000} ms",fontSize=10.sp,maxLines=2)
         }
         frame?.timingNs?.takeIf { it.size >= 14 }?.let { t ->
-            Text("동조 내부: RF 설정 ${t[6]/1_000_000} · PLL ${t[7]/1_000_000} ms",fontSize=10.sp)
+            Text("USB 최적화 ${if(s.config.fastUsbTune)"ON" else "OFF"} · 동조 내부: RF 설정 ${t[6]/1_000_000} · PLL ${t[7]/1_000_000} ms",fontSize=10.sp)
             Text("동조 USB: 쓰기 ${t[8]/1_000_000} ms/${t[11]}회 · 읽기 ${t[9]/1_000_000} ms/${t[12]}회 · 기타 ${t[10]/1_000_000} ms/${t[13]}회",fontSize=10.sp,maxLines=2)
         }
         if(s.message.isNotBlank())Text(s.message,color=AnalyzerColors.TextPrimary,fontSize=11.sp,maxLines=1)
@@ -179,6 +179,7 @@ private fun MeasurementSettings(c:SweepConfig,frame:SpectrumFrame?,vm:SpectrumVi
     var dc by remember{mutableStateOf(c.removeDc)};var channel by remember{mutableStateOf(c.channelPowerEnabled)}
     var settle by remember{mutableStateOf(c.tuneSettleMs.toString())}
     var nativeSettle by remember{mutableStateOf(c.nativeSettleMs.toString())}
+    var fastUsb by remember{mutableStateOf(c.fastUsbTune)}
     var error by remember{mutableStateOf("")}
     Dialog(onDismissRequest=onDismiss,properties=DialogProperties(usePlatformDefaultWidth=false)) {
         Surface(Modifier.fillMaxWidth(0.95f).fillMaxHeight(0.95f).imePadding(),shape=MaterialTheme.shapes.large) {
@@ -214,6 +215,7 @@ private fun MeasurementSettings(c:SweepConfig,frame:SpectrumFrame?,vm:SpectrumVi
                             Text("넓은 Span은 순차 스윕입니다. B3 30M은 V4 주파수 상한 때문에 Span 30 MHz로 설정합니다.",fontSize=12.sp)
                             NumberField("USB 직접 대기 (ms)",nativeSettle,{nativeSettle=it})
                             Row {listOf(5,10,20,50).forEach{ms->SelectionButton("${ms} ms",nativeSettle.toIntOrNull()==ms,onClick={nativeSettle=ms.toString()})}}
+                            Row{Switch(fastUsb,{fastUsb=it});Text(" USB 전송 최적화 (비교용)")}
                             NumberField("SDR Driver 대기 (ms)",settle,{settle=it})
                             Row {listOf(80,160,650).forEach{ms->SelectionButton("${ms} ms",settle.toIntOrNull()==ms,onClick={settle=ms.toString()})}}
                             Text("고속 스윕: 실물 주파수 일치 검증 필요. 비교 확인은 650 ms.",fontSize=12.sp)
@@ -275,7 +277,7 @@ private fun MeasurementSettings(c:SweepConfig,frame:SpectrumFrame?,vm:SpectrumVi
                         else {
                             val v=numbers.map{it!!}
                             val config=SweepConfig(centerMhz=v[0],spanMhz=v[1],refLevelDb=v[2],manualGainLevel=gain.toInt(),removeDc=dc,
-                                refLevelOffsetDb=v[3],dbPerDiv=v[4],rbwKhz=v[5],vbwKhz=v[6],integrationBwMhz=v[7],channelPowerEnabled=channel,autoGain=agc,tuneSettleMs=v[8].toInt(),nativeSettleMs=v[9].toInt())
+                                refLevelOffsetDb=v[3],dbPerDiv=v[4],rbwKhz=v[5],vbwKhz=v[6],integrationBwMhz=v[7],channelPowerEnabled=channel,autoGain=agc,tuneSettleMs=v[8].toInt(),nativeSettleMs=v[9].toInt(),fastUsbTune=fastUsb)
                             if(vm.configure(config))onDismiss()else error=vm.state.value.message
                         }
                     }){Text("적용")}

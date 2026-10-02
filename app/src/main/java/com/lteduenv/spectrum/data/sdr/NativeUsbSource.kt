@@ -23,7 +23,7 @@ interface SpectrumSource {
 private class UsbPermissionDenied : IllegalStateException("USB 사용 권한이 필요합니다 · 실측 시작을 눌러 다시 허용하세요")
 class NativeRtl {
     companion object { init { System.loadLibrary("spectrumusb") } }
-    external fun open(fd:Int,path:String,agc:Boolean,gain:Int):Long
+    external fun open(fd:Int,path:String,agc:Boolean,gain:Int,fast:Boolean):Long
     external fun tune(handle:Long,hz:Int,settleMs:Int):LongArray
     external fun reset(handle:Long)
     external fun read(handle:Long,data:ByteArray,length:Int):Int
@@ -100,7 +100,7 @@ class NativeUsbSource(context:Context,private val onStatus:(String)->Unit = {}):
                     var handle=0L
                     try {
                         val gain=RtlTcpSource.GAINS[((config.manualGainLevel-1)*(RtlTcpSource.GAINS.size-1)/9.0).roundToInt()]
-                        handle=native.open(connection.fileDescriptor,device.deviceName,config.autoGain,gain)
+                        handle=native.open(connection.fileDescriptor,device.deviceName,config.autoGain,gain,config.fastUsbTune)
                         val byteCount=plan.fftSize*SpectrumDsp.blockFrames(plan.fftSize,config.vbwKhz)*2
                         val iq=FloatArray(byteCount)
                         val reader=UsbIqReader({raw,n->native.read(handle,raw,n)},{if(stopped.get())throw CancellationException()})

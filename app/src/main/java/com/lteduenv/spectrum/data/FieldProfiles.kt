@@ -19,15 +19,15 @@ object FieldProfiles {
             channelPowerEnabled=equipment),maxHold=!equipment)
     }
     fun encode(p:FieldProfile):String=with(p.config){
-        listOf("3",centerMhz,spanMhz,refLevelDb,manualGainLevel,removeDc,refLevelOffsetDb,
-            rbwKhz,vbwKhz,integrationBwMhz,channelPowerEnabled,autoGain,dbPerDiv,p.maxHold,tuneSettleMs,nativeSettleMs).joinToString("|")
+        listOf("4",centerMhz,spanMhz,refLevelDb,manualGainLevel,removeDc,refLevelOffsetDb,
+            rbwKhz,vbwKhz,integrationBwMhz,channelPowerEnabled,autoGain,dbPerDiv,p.maxHold,tuneSettleMs,nativeSettleMs,fastUsbTune).joinToString("|")
     }
     fun decode(text:String):FieldProfile {
-        val v=text.split('|');require((v.size==14 && v[0]=="1") || (v.size==15 && v[0]=="2") || (v.size==16 && v[0]=="3")){"저장 설정 형식 오류"}
+        val v=text.split('|');require((v.size==14 && v[0]=="1") || (v.size==15 && v[0]=="2") || (v.size==16 && v[0]=="3") || (v.size==17 && v[0]=="4")){"저장 설정 형식 오류"}
         val c=SweepConfig(centerMhz=v[1].toDouble(),spanMhz=v[2].toDouble(),refLevelDb=v[3].toDouble(),
             manualGainLevel=v[4].toInt(),removeDc=v[5].toBooleanStrict(),refLevelOffsetDb=v[6].toDouble(),
             rbwKhz=v[7].toDouble(),vbwKhz=v[8].toDouble(),integrationBwMhz=v[9].toDouble(),
-            channelPowerEnabled=v[10].toBooleanStrict(),autoGain=v[11].toBooleanStrict(),dbPerDiv=v[12].toDouble(),tuneSettleMs=if(v.size>=15)v[14].toInt()else 80,nativeSettleMs=if(v.size==16)v[15].toInt()else 10)
+            channelPowerEnabled=v[10].toBooleanStrict(),autoGain=v[11].toBooleanStrict(),dbPerDiv=v[12].toDouble(),tuneSettleMs=if(v.size>=15)v[14].toInt()else 80,nativeSettleMs=if(v.size>=16)v[15].toInt()else 10,fastUsbTune=if(v.size>=17)v[16].toBooleanStrict()else true)
         SweepMath.plan(c)
         return FieldProfile(c,v[13].toBooleanStrict())
     }
