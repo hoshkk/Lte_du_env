@@ -129,26 +129,25 @@ private fun TopBar(
 ) {
     val s = state.settings
     var menu by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         if (state.running) {
-            Button(onClick = vm::stop, colors = ButtonDefaults.buttonColors(containerColor = Bad)) {
-                Text(if (state.demo) "■ 데모 정지" else "■ 정지", fontWeight = FontWeight.Bold)
-            }
+            Pill(if (state.demo) "■ 데모 정지" else "■ 정지", fill = Bad, bold = true, onClick = vm::stop)
         } else {
-            Button(onClick = { vm.start(false) }, colors = ButtonDefaults.buttonColors(containerColor = Good)) {
-                Text("▶ 측정 시작", fontWeight = FontWeight.Bold, color = Color.Black)
-            }
+            Pill("▶ 측정 시작", fill = Good, textColor = Color.Black, bold = true) { vm.start(false) }
         }
+        // Fits a phone in landscape; scrolls only on very narrow screens.
         Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Segmented(Mode.values().map { it.title }, Mode.values().indexOf(s.mode)) { vm.selectMode(Mode.values()[it]) }
-            Segmented(Band.values().map { it.label }, s.band?.let { Band.values().indexOf(it) }) { vm.selectBand(Band.values()[it]) }
+            Segmented(Band.values().map { it.label.removeSuffix(" RX").replace(" RX ", " ") }, s.band?.let { Band.values().indexOf(it) }) {
+                vm.selectBand(Band.values()[it])
+            }
             GainControl(s, vm)
-            OutlinedButton(onClick = vm::autoFit, enabled = state.running) { Text("자동 맞춤") }
+            Pill("자동 맞춤", enabled = state.running, onClick = vm::autoFit)
         }
-        OutlinedButton(onClick = onSettings) { Text("⚙ 설정") }
+        Pill("⚙ 설정", onClick = onSettings)
         Box {
-            OutlinedButton(onClick = { menu = true }) { Text("⋮") }
+            Pill(" ⋮ ", bold = true) { menu = true }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 val close = { menu = false }
                 if (!state.running) MenuItem("데모 실행 (동글 없이 화면 보기)", true, close) { vm.start(true) }
@@ -174,13 +173,32 @@ private fun MenuItem(label: String, enabled: Boolean, close: () -> Unit, action:
 
 @Composable
 private fun GainControl(s: Settings, vm: MeasureViewModel) {
-    Row(Modifier.clip(RoundedCornerShape(20.dp)).border(1.dp, Line, RoundedCornerShape(20.dp)),
-        verticalAlignment = Alignment.CenterVertically) {
-        TextButton(onClick = { vm.stepGain(-1) }, enabled = (s.gainStep ?: 0) > 0) { Text("−", fontSize = 18.sp) }
-        Text("Gain ${s.gainStep?.let { "$it" } ?: "AGC"}", color = Color.White, fontSize = 14.sp)
-        TextButton(onClick = { vm.stepGain(1) }, enabled = (s.gainStep ?: Settings.MAX_GAIN_STEP) < Settings.MAX_GAIN_STEP) {
-            Text("＋", fontSize = 18.sp)
+    val shape = RoundedCornerShape(20.dp)
+    val canDown = (s.gainStep ?: 0) > 0
+    val canUp = (s.gainStep ?: Settings.MAX_GAIN_STEP) < Settings.MAX_GAIN_STEP
+    Row(Modifier.clip(shape).border(1.dp, Line, shape), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.clickable(enabled = canDown) { vm.stepGain(-1) }.padding(horizontal = 12.dp, vertical = 6.dp)) {
+            Text("−", color = if (canDown) Accent else Line, fontSize = 18.sp, fontWeight = FontWeight.Bold)
         }
+        Text("Gain ${s.gainStep?.let { "$it" } ?: "AGC"}", color = Color.White, fontSize = 13.sp)
+        Box(Modifier.clickable(enabled = canUp) { vm.stepGain(1) }.padding(horizontal = 12.dp, vertical = 6.dp)) {
+            Text("＋", color = if (canUp) Accent else Line, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+/** Compact rounded button used across the bars. */
+@Composable
+private fun Pill(
+    label: String, enabled: Boolean = true, fill: Color? = null, textColor: Color = Color.White,
+    bold: Boolean = false, onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(20.dp)
+    Box(Modifier.clip(shape)
+        .then(if (fill != null) Modifier.background(if (enabled) fill else fill.copy(alpha = 0.4f)) else Modifier.border(1.dp, Line, shape))
+        .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Text(label, color = if (!enabled) Line else if (fill != null) textColor else Accent, fontSize = 13.sp,
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
     }
 }
 
@@ -192,8 +210,8 @@ private fun Segmented(options: List<String>, selected: Int?, onSelect: (Int) -> 
         options.forEachIndexed { i, label ->
             val on = i == selected
             Box(Modifier.background(if (on) Accent else Color.Transparent).clickable { onSelect(i) }
-                .padding(horizontal = 14.dp, vertical = 9.dp)) {
-                Text(label, color = if (on) Color.White else Dim, fontSize = 14.sp,
+                .padding(horizontal = 11.dp, vertical = 8.dp)) {
+                Text(label, color = if (on) Color.White else Dim, fontSize = 13.sp, maxLines = 1,
                     fontWeight = if (on) FontWeight.Bold else FontWeight.Normal)
             }
         }
@@ -259,8 +277,8 @@ private fun BottomBar(state: UiState, vm: MeasureViewModel, showPanel: Boolean, 
             Segmented(state.markers.map { "M${it.index}" + if (it.freqHz != null) "•" else "" }, state.selectedMarker - 1) {
                 vm.selectMarker(it + 1)
             }
-            TextButton(onClick = vm::markerToPeak, enabled = state.shown != null) { Text("Peak") }
-            TextButton(onClick = vm::clearMarker) { Text("Clear") }
+            Pill("Peak", enabled = state.shown != null, onClick = vm::markerToPeak)
+            Pill("Clear", onClick = vm::clearMarker)
             state.markers.firstOrNull { it.index == state.selectedMarker }?.freqHz?.let { f ->
                 val v = state.shown?.let { Analysis.levelAt(it, f, s.offsetDb) }
                 Text("M${state.selectedMarker}  ${(f / 1e6).f(4)} MHz  ${v?.f(1) ?: "—"} dB",
@@ -268,10 +286,11 @@ private fun BottomBar(state: UiState, vm: MeasureViewModel, showPanel: Boolean, 
             }
             Spacer(Modifier.width(8.dp))
             Toggle("Max Hold", s.maxHold, vm::toggleHold)
-            TextButton(onClick = vm::resetHold, enabled = s.maxHold) { Text("Hold 초기화") }
+            Pill("초기화", enabled = s.maxHold, onClick = vm::resetHold)
             Toggle("Ch Power", s.channelPower, vm::toggleChannelPower)
         }
-        TextButton(onClick = onTogglePanel) { Text(if (showPanel) "결과 ▸" else "◂ 결과") }
+        Spacer(Modifier.width(6.dp))
+        Pill(if (showPanel) "결과 숨기기 ▸" else "◂ 결과 보기", onClick = onTogglePanel)
     }
 }
 
@@ -280,8 +299,8 @@ private fun Toggle(label: String, on: Boolean, onClick: () -> Unit) {
     val shape = RoundedCornerShape(20.dp)
     Box(Modifier.clip(shape).border(BorderStroke(1.dp, if (on) Accent else Line), shape)
         .background(if (on) Accent.copy(alpha = 0.25f) else Color.Transparent)
-        .clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 7.dp)) {
-        Text((if (on) "● " else "○ ") + label, color = if (on) Color.White else Dim, fontSize = 13.sp)
+        .clickable(onClick = onClick).padding(horizontal = 11.dp, vertical = 8.dp)) {
+        Text((if (on) "● " else "○ ") + label, color = if (on) Color.White else Dim, fontSize = 13.sp, maxLines = 1)
     }
 }
 
