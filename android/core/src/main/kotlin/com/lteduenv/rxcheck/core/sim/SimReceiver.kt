@@ -35,7 +35,7 @@ class SimReceiver(
         return true
     }
 
-    override fun capture(out: FloatArray, discardSamples: Int) {
+    override fun capture(out: FloatArray, discardSamples: Int): Int {
         val total = out.size / 2
         var n = 1
         while (n < min(total, 4096)) n *= 2
@@ -76,7 +76,12 @@ class SimReceiver(
                 out[2 * i + 1] += (amp * sin(ph)).toFloat()
             }
         }
-        for (i in out.indices) out[i] = max(-1f, min(0.992f, out[i]))
+        var clipped = 0
+        for (i in out.indices) {
+            if (out[i] <= -0.996f || out[i] >= 0.992f) clipped++
+            out[i] = max(-0.996f, min(0.992f, out[i]))
+        }
+        return clipped
     }
 
     override fun close() {}

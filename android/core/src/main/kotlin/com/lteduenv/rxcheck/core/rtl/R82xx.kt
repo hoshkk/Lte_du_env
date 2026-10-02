@@ -8,7 +8,8 @@ import kotlin.math.min
  * Rafael Micro R820T / R828D tuner, including RTL-SDR Blog V4 input switching.
  *
  * Register values and the init/calibration sequence follow the Apache-2.0
- * webrtlsdr driver (Jacobo Tarrio, Google). See THIRD_PARTY.md.
+ * webrtlsdr driver (Jacobo Tarrio, Google); the IF bandwidth selection in
+ * [setBandwidth] follows librtlsdr (GPL-2.0-or-later). See THIRD_PARTY.md.
  *
  * [fast] tuning differs only in how registers reach the chip:
  *  - a write whose value equals the last successfully written value is skipped
@@ -31,6 +32,9 @@ class R82xx(
     private var forceWrites = true
     private var input = -1
     var xtalHz = XTAL_HZ
+    /** Tuner IF. 3.57 MHz with the default 6 MHz filter; lower after [setBandwidth]. */
+    var ifHz = IF_HZ
+        private set
     var pllLocked = false
         private set
     /** Filter calibration ran without PLL lock; filter bandwidth may be off. */
@@ -55,7 +59,7 @@ class R82xx(
     /** Tunes the LO. Returns the actual RF frequency in Hz. Repeater must be open. */
     fun setFrequency(freqHz: Long): Double {
         val upconvert = if (isBlogV4 && freqHz < 28_800_000L) 28_800_000L else 0L
-        val lo = freqHz + upconvert + IF_HZ
+        val lo = freqHz + upconvert + ifHz
         setMux(lo)
         val actualLo = setPll(lo)
         if (isBlogV4) {
@@ -77,7 +81,47 @@ class R82xx(
                 writeMask(0x05, if (want == 0) 0x00 else 0x60, 0x60)
             }
         }
-        return actualLo - IF_HZ - upconvert
+        return actualLo - ifHz - upconvert
+    }
+
+    /**
+     * IF filter for the given bandwidth (normally the sample rate), as librtlsdr's
+     * r82xx_set_bandwidth does. At 2.4 MS/s this narrows the IF filter from 6 MHz
+     * to about 2.4 MHz, so strong signals just outside the capture (e.g. B8 DL
+     * above the B8 RX band) reach the ADC attenuated. Returns the new IF in Hz;
+     * the demodulator IF must be set to it. Repeater must be open.
+     */
+    fun setBandwidth(bwHz: Int): Long {
+        val reg0a: Int
+        var reg0b: Int
+        var intFreq: Long
+        if (bwHz > 7_000_000) {
+            reg0a = 0x10; reg0b = 0x0b; intFreq = 4_570_000
+        } else if (bwHz > 6_000_000) {
+            reg0a = 0x10; reg0b = 0x2a; intFreq = 4_570_000
+        } else if (bwHz > IF_LPF_HZ[0] + FILT_HP_BW1 + FILT_HP_BW2) {
+            reg0a = 0x10; reg0b = 0x6b; intFreq = 3_570_000
+        } else {
+            reg0a = 0x00; reg0b = 0x80; intFreq = 2_300_000
+            var bw = bwHz
+            var realBw = 0
+            if (bw > IF_LPF_HZ[0] + FILT_HP_BW1) {
+                bw -= FILT_HP_BW2; intFreq += FILT_HP_BW2; realBw += FILT_HP_BW2
+            } else reg0b = reg0b or 0x20
+            if (bw > IF_LPF_HZ[0]) {
+                bw -= FILT_HP_BW1; intFreq += FILT_HP_BW1; realBw += FILT_HP_BW1
+            } else reg0b = reg0b or 0x40
+            var i = 0
+            while (i < IF_LPF_HZ.size && bw <= IF_LPF_HZ[i]) i++
+            i--
+            reg0b = reg0b or (15 - i)
+            realBw += IF_LPF_HZ[i]
+            intFreq -= realBw / 2
+        }
+        writeMask(0x0a, reg0a, 0x10)
+        writeMask(0x0b, reg0b, 0xef)
+        ifHz = intFreq
+        return intFreq
     }
 
     /** Manual gain step 0..15: LNA and mixer gain index (roughly 3.5 dB per step). */
@@ -250,6 +294,11 @@ class R82xx(
         const val XTAL_HZ = 28_800_000L
         const val IF_HZ = 3_570_000L
         const val CHIP_ID = 0x69
+        private const val FILT_HP_BW1 = 350_000
+        private const val FILT_HP_BW2 = 380_000
+        /** IF low-pass corners selectable in reg 0x0b[3:0] (15 - index). */
+        private val IF_LPF_HZ = intArrayOf(1_700_000, 1_600_000, 1_550_000, 1_450_000, 1_200_000,
+            900_000, 700_000, 550_000, 450_000, 350_000)
 
         /** Registers 0x05..0x1f power-on values. */
         val INIT_REGS = intArrayOf(

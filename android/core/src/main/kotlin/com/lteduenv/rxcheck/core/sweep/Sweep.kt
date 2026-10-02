@@ -10,6 +10,8 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToLong
 
+const val CLIP_LIMIT = 0.001
+
 /** One tuning step: points [firstPoint, firstPoint+count) come from FFT bins starting at firstBin. */
 data class Segment(val centerHz: Long, val firstPoint: Int, val count: Int, val firstBin: Int)
 
@@ -72,7 +74,11 @@ class Trace(
     val unlockedSegments: Int,
     val timing: SweepTiming?,
     val timestampMs: Long,
+    /** Fraction of I/Q components at the ADC limits in the segments so far. */
+    val clippedFraction: Double = 0.0,
 ) {
+    /** More than 0.1% of samples at full scale: the dongle is overloaded. */
+    val clipped get() = clippedFraction > CLIP_LIMIT
     val complete get() = completedSegments == plan.segments.size
     val points get() = plan.points
     fun freqAt(i: Int) = plan.freqAt(i)
@@ -83,8 +89,13 @@ class Trace(
  * [averages] FFT frames, average power, place the centre bins on the trace.
  */
 class SweepEngine(private val rx: Receiver) {
+    /** Forget the current tuning (e.g. after the receiver retuned elsewhere). */
+    fun invalidateTuning() { tunedHz = 0L }
+
     private var spectrum: PowerSpectrum? = null
     private var iq = FloatArray(0)
+    private var tunedHz = 0L
+    private var tunedLocked = false
 
     var discardSamples = 2048
 
@@ -107,12 +118,16 @@ class SweepEngine(private val rx: Receiver) {
         val t0 = System.nanoTime()
         var tuneNs = 0L; var capNs = 0L; var dspNs = 0L
         var unlocked = 0
+        var clipped = 0L; var components = 0L
         for ((index, seg) in plan.segments.withIndex()) {
             if (!isActive()) return null
             val a = System.nanoTime()
-            val locked = rx.tune(seg.centerHz)
+            // A span that fits one capture stays tuned: no retune between sweeps.
+            val locked = if (plan.segments.size == 1 && tunedHz == seg.centerHz && tunedLocked) true
+                else rx.tune(seg.centerHz).also { tunedHz = seg.centerHz; tunedLocked = it }
             val b = System.nanoTime()
-            rx.capture(iq, discardSamples)
+            clipped += rx.capture(iq, discardSamples)
+            components += iq.size
             val c = System.nanoTime()
             ps.compute(iq, out)
             if (dcPatch) patchDc(out)
@@ -128,7 +143,7 @@ class SweepEngine(private val rx: Receiver) {
                 val timing = if (last) SweepTiming((d - t0) / 1_000_000, tuneNs / 1_000_000,
                     capNs / 1_000_000, dspNs / 1_000_000, rx.takeStats()) else null
                 val trace = Trace(plan, levels.copyOf(), enbwHz, index + 1, unlocked, timing,
-                    System.currentTimeMillis())
+                    System.currentTimeMillis(), clipped.toDouble() / components)
                 onSegment?.invoke(trace)
                 if (last) return trace
             }

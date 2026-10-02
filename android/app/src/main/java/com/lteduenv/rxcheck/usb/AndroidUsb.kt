@@ -20,6 +20,9 @@ import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+/** The user refused (or did not answer) the USB permission prompt; never retried. */
+class UsbPermissionDenied(message: String) : java.io.IOException(message)
+
 /** UsbIo over Android's USB host API (synchronous vendor control + bulk IN). */
 class AndroidUsbIo(private val device: UsbDevice, private val conn: UsbDeviceConnection) : UsbIo, AutoCloseable {
     private val iface: UsbInterface = device.getInterface(0)
@@ -77,7 +80,7 @@ object UsbAccess {
 
     private suspend fun requestPermission(context: Context, manager: UsbManager, device: UsbDevice) {
         val action = context.packageName + ".USB_PERMISSION"
-        withTimeout(60_000) {
+        try { withTimeout(60_000) {
             suspendCancellableCoroutine<Unit> { cont ->
                 val receiver = object : BroadcastReceiver() {
                     override fun onReceive(c: Context, intent: Intent) {
@@ -85,7 +88,7 @@ object UsbAccess {
                         runCatching { context.unregisterReceiver(this) }
                         if (!cont.isActive) return
                         if (manager.hasPermission(device)) cont.resume(Unit)
-                        else cont.resumeWithException(UsbIoException("USB 사용 권한이 거부되었습니다"))
+                        else cont.resumeWithException(UsbPermissionDenied("USB 사용 권한이 거부되었습니다. 측정 시작을 눌러 다시 허용하세요"))
                     }
                 }
                 ContextCompat.registerReceiver(context, receiver, IntentFilter(action),
@@ -96,6 +99,8 @@ object UsbAccess {
                     Intent(action).setPackage(context.packageName), flags)
                 manager.requestPermission(device, pi)
             }
+        } } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            throw UsbPermissionDenied("USB 권한 응답이 없습니다. 측정 시작을 다시 누르세요")
         }
     }
 }

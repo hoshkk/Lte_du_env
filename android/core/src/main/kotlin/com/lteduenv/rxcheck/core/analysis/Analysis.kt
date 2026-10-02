@@ -119,6 +119,21 @@ object Analysis {
         return out.sortedByDescending { it.levelDb }.take(maxCount)
     }
 
+    /** Level at a frequency (nearest bin), dB incl. offset; null outside the trace. */
+    fun levelAt(t: Trace, freqHz: Double, offsetDb: Double = 0.0): Double? {
+        if (freqHz < t.freqAt(0) - t.plan.binHz / 2 || freqHz > t.freqAt(t.points - 1) + t.plan.binHz / 2) return null
+        val i = Math.round((freqHz - t.plan.startHz) / t.plan.binHz).toInt().coerceIn(0, t.points - 1)
+        val v = t.levelsDb[i]
+        return if (v.isFinite()) v + offsetDb else null
+    }
+
+    /** Frequency of the highest finite bin. */
+    fun peakFreq(t: Trace): Double? {
+        var k = -1
+        for (i in 0 until t.points) if (t.levelsDb[i].isFinite() && (k < 0 || t.levelsDb[i] > t.levelsDb[k])) k = i
+        return if (k < 0) null else t.freqAt(k)
+    }
+
     /** Element-wise maximum of two traces of the same plan. */
     fun maxHold(prev: Trace?, cur: Trace): Trace {
         if (prev == null || prev.plan != cur.plan) return cur
@@ -126,6 +141,7 @@ object Analysis {
             val a = prev.levelsDb[it]; val b = cur.levelsDb[it]
             when { !a.isFinite() -> b; !b.isFinite() -> a; else -> max(a, b) }
         }
-        return Trace(cur.plan, v, cur.enbwHz, cur.completedSegments, cur.unlockedSegments, cur.timing, cur.timestampMs)
+        return Trace(cur.plan, v, cur.enbwHz, cur.completedSegments, cur.unlockedSegments, cur.timing, cur.timestampMs,
+            maxOf(prev.clippedFraction, cur.clippedFraction))
     }
 }

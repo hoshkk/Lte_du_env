@@ -20,6 +20,9 @@ class RtlSdr private constructor(
 ) : Receiver {
     private var raw = ByteArray(16384)
     private var ppm = 0
+
+    /** Extra wait after the PLL reports lock, before the FIFO reset (0 = none). */
+    var settleMs = 0
     var centerHz = 0L
         private set
 
@@ -27,6 +30,7 @@ class RtlSdr private constructor(
         get() = buildString {
             append(if (tuner.isBlogV4) "RTL-SDR Blog V4" else "RTL-SDR ${tuner.chip}")
             append(" · ").append(if (tuner.fast) "고속 동조" else "기본 동조")
+            append(" · IF ").append(if (tuner.ifHz == R82xx.IF_HZ) "6 MHz" else "좁음")
         }
 
     var fastTune: Boolean
@@ -44,21 +48,28 @@ class RtlSdr private constructor(
         tuner.setFrequency(hz)
         com.setRepeater(false)
         centerHz = hz
+        if (settleMs > 0) Thread.sleep(settleMs.toLong())
         return tuner.pllLocked
     }
 
-    override fun capture(out: FloatArray, discardSamples: Int) {
+    override fun capture(out: FloatArray, discardSamples: Int): Int {
         com.resetFifo()
         var drop = discardSamples * 2
         while (drop > 0) drop -= com.bulkRead(raw, align(min(drop, raw.size)))
         var pos = 0
+        var clipped = 0
         while (pos < out.size) {
             val want = align(min(out.size - pos, raw.size))
             val n = com.bulkRead(raw, want)
             val use = min(n and 1.inv(), out.size - pos)
-            for (i in 0 until use) out[pos + i] = ((raw[i].toInt() and 0xff) - 127.4f) / 128f
+            for (i in 0 until use) {
+                val b = raw[i].toInt() and 0xff
+                if (b == 0 || b == 255) clipped++
+                out[pos + i] = (b - 127.4f) / 128f
+            }
             pos += use
         }
+        return clipped
     }
 
     override fun takeStats(): UsbStats = com.stats.snapshot().also { com.stats.reset() }
@@ -75,7 +86,7 @@ class RtlSdr private constructor(
         com.setDemodReg(1, 0x3e, (offset shr 8) and 0x3f, 1)
         com.setDemodReg(1, 0x3f, offset and 0xff, 1)
         tuner.xtalHz = xtal()
-        setIfFrequency(R82xx.IF_HZ)
+        setIfFrequency(tuner.ifHz)
         if (centerHz != 0L) tune(centerHz)
     }
 
@@ -98,7 +109,12 @@ class RtlSdr private constructor(
         com.setDemodReg(1, 0x1b, m and 0xff, 1)
     }
 
-    private fun setSampleRate(rate: Int): Int {
+    private fun setSampleRate(rate: Int, narrowIf: Boolean): Int {
+        if (narrowIf) {
+            com.setRepeater(true)
+            tuner.setBandwidth(rate)
+            com.setRepeater(false)
+        }
         var ratio = floor(xtal().toDouble() * (1 shl 22) / rate).toLong().toInt()
         ratio = ratio and 0x0ffffffc
         com.setDemodReg(1, 0x9f, (ratio shr 16) and 0xffff, 2)
@@ -121,8 +137,12 @@ class RtlSdr private constructor(
         private fun align(n: Int) = (n + 511) / 512 * 512
 
         /** Initializes the dongle and tuner. Takes a fraction of a second. */
+        /**
+         * [narrowIf]: librtlsdr-style IF filter matched to the sample rate (default);
+         * false keeps the wider 6 MHz IF filter.
+         */
         fun open(io: UsbIo, fastTune: Boolean = true, gainStep: Int? = 4,
-                 sampleRate: Int = DEFAULT_RATE): RtlSdr {
+                 sampleRate: Int = DEFAULT_RATE, narrowIf: Boolean = true): RtlSdr {
             val com = RtlCom(io)
             initBaseband(com)
             val tuner = findTuner(com)
@@ -130,7 +150,7 @@ class RtlSdr private constructor(
             tuner.init()
             com.setRepeater(false)
             val sdr = RtlSdr(com, tuner, sampleRate)
-            sdr.setSampleRate(sampleRate)
+            sdr.setSampleRate(sampleRate, narrowIf)
             sdr.setPpm(0)
             com.setDemodReg(0, 0x19, 0x05, 1) // RTL AGC off
             sdr.setGain(gainStep)

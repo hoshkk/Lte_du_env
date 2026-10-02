@@ -13,8 +13,9 @@ interface Receiver : AutoCloseable {
     /**
      * Fills [out] with interleaved I/Q in [-1, 1) captured after the last tune.
      * Samples produced while the tuner was moving are dropped first.
+     * Returns how many I/Q components hit the ADC limits (clipping).
      */
-    fun capture(out: FloatArray, discardSamples: Int)
+    fun capture(out: FloatArray, discardSamples: Int): Int
 
     /** USB counters since the last call (null for sources without USB). */
     fun takeStats(): UsbStats? = null

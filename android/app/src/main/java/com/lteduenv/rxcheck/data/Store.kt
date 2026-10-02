@@ -1,6 +1,7 @@
 package com.lteduenv.rxcheck.data
 
 import android.content.Context
+import android.content.SharedPreferences
 import com.lteduenv.rxcheck.core.model.Band
 import com.lteduenv.rxcheck.core.model.Mode
 import com.lteduenv.rxcheck.core.model.Settings
@@ -10,53 +11,79 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
 
-/** Settings in SharedPreferences; baselines as small binary files keyed by sweep plan. */
+/**
+ * Settings and per-mode quick presets in SharedPreferences; baselines as small
+ * binary files keyed by everything that changes the measured levels.
+ */
 class Store(context: Context) {
     private val prefs = context.getSharedPreferences("rxcheck", Context.MODE_PRIVATE)
     private val dir = File(context.filesDir, "baselines").apply { mkdirs() }
 
-    fun loadSettings(): Settings {
-        val d = Settings()
-        if (!prefs.contains("mode")) return d
-        return runCatching {
-            Settings(
-                mode = Mode.valueOf(prefs.getString("mode", d.mode.name)!!),
-                band = prefs.getString("band", null)?.let { b -> Band.values().firstOrNull { it.name == b } },
-                centerMhz = prefs.getFloat("center", d.centerMhz.toFloat()).toDouble(),
-                spanMhz = prefs.getFloat("span", d.spanMhz.toFloat()).toDouble(),
-                channelBwMhz = prefs.getFloat("chbw", d.channelBwMhz.toFloat()).toDouble(),
-                rbwKhz = prefs.getFloat("rbw", d.rbwKhz.toFloat()).toDouble(),
-                averages = prefs.getInt("avg", d.averages),
-                gainStep = prefs.getInt("gain", d.gainStep ?: -1).takeIf { it >= 0 },
-                offsetDb = prefs.getFloat("offset", 0f).toDouble(),
-                maxHold = prefs.getBoolean("hold", d.maxHold),
-                thresholdDb = prefs.getFloat("thr", d.thresholdDb.toFloat()).toDouble(),
-                fastTune = prefs.getBoolean("fast", true),
-                dcPatch = prefs.getBoolean("dc", false),
-                refLevelDb = prefs.getFloat("ref", d.refLevelDb.toFloat()).toDouble(),
-                dbPerDiv = prefs.getFloat("div", d.dbPerDiv.toFloat()).toDouble(),
-            ).takeIf { it.validate() == null } ?: d
-        }.getOrDefault(d)
+    fun loadSettings(): Settings = read("") ?: Settings()
+
+    fun saveSettings(s: Settings) = write("", s)
+
+    fun hasPreset(mode: Mode) = prefs.contains(presetPrefix(mode) + "mode")
+    fun savePreset(mode: Mode, s: Settings) = write(presetPrefix(mode), s.copy(mode = mode))
+    fun loadPreset(mode: Mode): Settings? = read(presetPrefix(mode))
+    fun clearPreset(mode: Mode) {
+        val p = presetPrefix(mode)
+        prefs.edit().apply { prefs.all.keys.filter { it.startsWith(p) }.forEach { remove(it) } }.apply()
     }
 
-    fun saveSettings(s: Settings) {
+    private fun presetPrefix(mode: Mode) = "preset_${mode.name}_"
+
+    private fun read(p: String): Settings? {
+        if (!prefs.contains(p + "mode")) return null
+        val d = Settings()
+        return runCatching {
+            Settings(
+                mode = Mode.valueOf(prefs.getString(p + "mode", d.mode.name)!!),
+                band = prefs.getString(p + "band", null)?.let { b -> Band.values().firstOrNull { it.name == b } },
+                centerMhz = prefs.double(p + "center", d.centerMhz),
+                spanMhz = prefs.double(p + "span", d.spanMhz),
+                channelBwMhz = prefs.double(p + "chbw", d.channelBwMhz),
+                rbwKhz = prefs.double(p + "rbw", d.rbwKhz),
+                averages = prefs.getInt(p + "avg", d.averages),
+                gainStep = prefs.getInt(p + "gain", d.gainStep ?: -1).takeIf { it >= 0 },
+                offsetDb = prefs.double(p + "offset", 0.0),
+                maxHold = prefs.getBoolean(p + "hold", d.maxHold),
+                thresholdDb = prefs.double(p + "thr", d.thresholdDb),
+                fastTune = prefs.getBoolean(p + "fast", d.fastTune),
+                narrowIf = prefs.getBoolean(p + "narrowif", d.narrowIf),
+                settleMs = prefs.getInt(p + "settle", d.settleMs),
+                channelPower = prefs.getBoolean(p + "chpow", d.channelPower),
+                dcPatch = prefs.getBoolean(p + "dc", d.dcPatch),
+                refLevelDb = prefs.double(p + "ref", d.refLevelDb),
+                dbPerDiv = prefs.double(p + "div", d.dbPerDiv),
+            ).takeIf { it.validate() == null }
+        }.getOrNull()
+    }
+
+    private fun write(p: String, s: Settings) {
         prefs.edit()
-            .putString("mode", s.mode.name).putString("band", s.band?.name)
-            .putFloat("center", s.centerMhz.toFloat()).putFloat("span", s.spanMhz.toFloat())
-            .putFloat("chbw", s.channelBwMhz.toFloat()).putFloat("rbw", s.rbwKhz.toFloat())
-            .putInt("avg", s.averages).putInt("gain", s.gainStep ?: -1)
-            .putFloat("offset", s.offsetDb.toFloat()).putBoolean("hold", s.maxHold)
-            .putFloat("thr", s.thresholdDb.toFloat()).putBoolean("fast", s.fastTune)
-            .putBoolean("dc", s.dcPatch).putFloat("ref", s.refLevelDb.toFloat())
-            .putFloat("div", s.dbPerDiv.toFloat())
+            .putString(p + "mode", s.mode.name).putString(p + "band", s.band?.name)
+            .putString(p + "center", s.centerMhz.toString()).putString(p + "span", s.spanMhz.toString())
+            .putString(p + "chbw", s.channelBwMhz.toString()).putString(p + "rbw", s.rbwKhz.toString())
+            .putInt(p + "avg", s.averages).putInt(p + "gain", s.gainStep ?: -1)
+            .putString(p + "offset", s.offsetDb.toString()).putBoolean(p + "hold", s.maxHold)
+            .putString(p + "thr", s.thresholdDb.toString()).putBoolean(p + "fast", s.fastTune)
+            .putBoolean(p + "narrowif", s.narrowIf).putInt(p + "settle", s.settleMs)
+            .putBoolean(p + "chpow", s.channelPower).putBoolean(p + "dc", s.dcPatch)
+            .putString(p + "ref", s.refLevelDb.toString()).putString(p + "div", s.dbPerDiv.toString())
             .apply()
     }
 
-    private fun key(p: SweepPlan) =
-        "%d_%d_%d_%d".format(p.startHz.toLong(), p.binHz.toLong(), p.points, p.sampleRate)
+    private fun SharedPreferences.double(key: String, def: Double): Double =
+        runCatching { getString(key, null)?.toDouble() }.getOrNull() ?: def
 
-    fun saveBaseline(t: Trace) {
-        DataOutputStream(File(dir, key(t.plan)).outputStream().buffered()).use { out ->
+    /** Everything that shifts raw levels must match for a baseline to be comparable. */
+    private fun key(p: SweepPlan, s: Settings) =
+        "%d_%d_%d_%d_g%s_if%s_dc%s".format(p.startHz.toLong(), p.binHz.toLong(), p.points, p.sampleRate,
+            s.gainStep?.toString() ?: "agc", if (s.narrowIf) "n" else "w", if (s.dcPatch) "1" else "0")
+
+    fun saveBaseline(t: Trace, s: Settings) {
+        DataOutputStream(File(dir, key(t.plan, s)).outputStream().buffered()).use { out ->
             out.writeLong(System.currentTimeMillis())
             out.writeDouble(t.enbwHz)
             out.writeInt(t.points)
@@ -64,9 +91,9 @@ class Store(context: Context) {
         }
     }
 
-    /** Baseline for exactly this plan (same span, RBW and sample rate), or null. */
-    fun loadBaseline(plan: SweepPlan): Pair<Trace, Long>? {
-        val f = File(dir, key(plan))
+    /** Baseline for exactly this plan and level-affecting settings, or null. */
+    fun loadBaseline(plan: SweepPlan, s: Settings): Pair<Trace, Long>? {
+        val f = File(dir, key(plan, s))
         if (!f.exists()) return null
         return runCatching {
             DataInputStream(f.inputStream().buffered()).use { inp ->
@@ -80,5 +107,5 @@ class Store(context: Context) {
         }.getOrNull()
     }
 
-    fun deleteBaseline(plan: SweepPlan) { File(dir, key(plan)).delete() }
+    fun deleteBaseline(plan: SweepPlan, s: Settings) { File(dir, key(plan, s)).delete() }
 }

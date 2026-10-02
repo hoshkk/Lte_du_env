@@ -38,7 +38,7 @@ class DriverTest {
             assertTrue(sdr.tune(f))
             val lo = usb.programmedLoHz()
             // SDM resolution: 2*28.8 MHz / 65536 / mixDiv < 900 Hz
-            assertTrue("LO for $f: $lo", abs(lo - (f + R82xx.IF_HZ)) < 1000)
+            assertTrue("LO for $f: $lo", abs(lo - (f + sdr.tuner.ifHz)) < 1000)
         }
     }
 

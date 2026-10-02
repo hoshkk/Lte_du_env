@@ -41,6 +41,12 @@ data class Settings(
     /** Spurious: dB above floor. Reverse: dB above the median block. */
     val thresholdDb: Double = 6.0,
     val fastTune: Boolean = true,
+    /** librtlsdr-style IF filter matched to the sample rate (vs. wide 6 MHz). */
+    val narrowIf: Boolean = true,
+    /** Extra wait after PLL lock before capturing, ms. */
+    val settleMs: Int = 0,
+    /** Show integrated channel power for the channel BW. */
+    val channelPower: Boolean = true,
     val dcPatch: Boolean = false,
     val refLevelDb: Double = -20.0,
     val dbPerDiv: Double = 10.0,
@@ -51,12 +57,13 @@ data class Settings(
     fun validate(): String? = when {
         !listOf(centerMhz, spanMhz, channelBwMhz, rbwKhz, offsetDb, thresholdDb, refLevelDb, dbPerDiv).all { it.isFinite() } ->
             "숫자 입력을 확인하세요"
-        spanMhz !in 0.1..60.0 -> "Span 범위: 0.1–60 MHz"
+        spanMhz !in 0.05..MAX_SPAN_MHZ -> "Span 범위: 0.05–50 MHz"
         startMhz < 24.0 || stopMhz > 1766.0 -> "측정 범위 전체가 24–1766 MHz 안이어야 합니다 (RTL-SDR V4 한계)"
         rbwKhz !in 1.0..300.0 -> "RBW 범위: 1–300 kHz"
         averages !in 1..256 -> "평균 횟수: 1–256"
-        gainStep != null && gainStep !in 0..15 -> "이득 단계: 0–15"
-        channelBwMhz <= 0 || channelBwMhz > spanMhz -> "채널 대역폭은 0보다 크고 Span 이하여야 합니다"
+        gainStep != null && gainStep !in 0..MAX_GAIN_STEP -> "이득 단계: 0–15"
+        settleMs !in 0..100 -> "안정화 대기: 0–100 ms"
+        channelBwMhz !in 0.01..60.0 -> "채널 대역폭: 0.01–60 MHz"
         dbPerDiv !in 1.0..20.0 -> "dB/div 범위: 1–20"
         else -> null
     }
@@ -67,18 +74,26 @@ data class Settings(
         return when (mode) {
             Mode.REVERSE -> copy(mode = mode, band = b, centerMhz = b.rxCenterMhz, spanMhz = b.reverseSpanMhz,
                 channelBwMhz = b.channelBwMhz, rbwKhz = 100.0, averages = 16, gainStep = 2,
-                maxHold = false, thresholdDb = 6.0)
+                maxHold = false, thresholdDb = 6.0, channelPower = true)
             Mode.SPURIOUS -> copy(mode = mode, band = b,
                 centerMhz = (b.spuriousStartMhz + b.spuriousStopMhz) / 2,
                 spanMhz = b.spuriousStopMhz - b.spuriousStartMhz,
                 channelBwMhz = b.channelBwMhz, rbwKhz = 10.0, averages = 4, gainStep = 8,
-                maxHold = true, thresholdDb = 10.0)
+                maxHold = true, thresholdDb = 10.0, channelPower = false)
         }
     }
+
+    /** Largest span that stays inside 24–1766 MHz around the current centre. */
+    fun maxSpanAtCenter() = minOf(MAX_SPAN_MHZ, 2 * (centerMhz - 24.0), 2 * (1766.0 - centerMhz))
 
     /** RX channel edges in Hz (the band preset's channel, which may differ from the span centre). */
     fun channelHz(): Pair<Double, Double> {
         val c = (band?.rxCenterMhz ?: centerMhz) * 1e6
         return (c - channelBwMhz * 5e5) to (c + channelBwMhz * 5e5)
+    }
+
+    companion object {
+        const val MAX_SPAN_MHZ = 50.0
+        const val MAX_GAIN_STEP = 15
     }
 }

@@ -25,3 +25,18 @@ Changes from webrtlsdr: ported to Kotlin over Android USB host APIs; I2C repeate
 open between tuner accesses; unchanged tuner register writes skipped; PLL registers
 0x14-0x16 written as one I2C burst; tuner init registers written as bursts; PLL lock
 failure after the retry is reported instead of assumed locked.
+
+## librtlsdr (GPL-2.0-or-later)
+
+`R82xx.setBandwidth` (IF filter selection for the sample rate: register 0x0a/0x0b values,
+IF low-pass corner table and IF frequency calculation) follows `r82xx_set_bandwidth` in
+librtlsdr / rtl-sdr-blog (https://github.com/rtlsdrblog/rtl-sdr-blog):
+
+    Copyright (C) 2013 Mauro Carvalho Chehab
+    Copyright (C) 2013 Steve Markgraf
+    Licensed under the GNU General Public License, version 2 or (at your option) any later version.
+
+Because of this part, the app as a whole is distributed under GPL-3.0-or-later terms
+(Apache-2.0 code may be combined into GPL-3.0 works). The unit test
+`MergeFeaturesTest.ifBandwidthMatchesLibrtlsdr` checks the port against values produced
+by the original C function.
