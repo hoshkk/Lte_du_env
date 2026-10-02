@@ -282,8 +282,34 @@ class R82xx(
         }
     }
 
+    /**
+     * Status reads without the register-pointer write. R82xx status reads start
+     * at register 0x00, whose first byte is always the chip ID (0x69), so every
+     * pointer-less read checks itself: 0 = not verified yet, 1 = in use, -1 = off.
+     */
+    private var pointerless = 0
+    private var pointerlessChecks = 0
+
+    /** Whether status reads currently skip the pointer write (diagnostics). */
+    val pointerlessReads get() = pointerless == 1
+
     /** Status registers from 0x00; the chip returns them bit-reversed. */
     private fun readRegs(len: Int): IntArray {
+        if (fast && !forceWrites && pointerless >= 0) {
+            val direct = runCatching { com.i2cReadDirect(chip.i2c, len) }.getOrNull()
+            val ok = direct != null && (direct[0].toInt() and 0xff) == CHIP_ID
+            if (pointerless == 1) {
+                if (ok) return IntArray(len) { bitRev(direct!![it].toInt() and 0xff) }
+                pointerless = -1 // never trust it again; fall through to the pointer read
+            } else {
+                // Verification: the pointer-less read must match a normal read right after it.
+                val reference = com.i2cRead(chip.i2c, 0x00, len)
+                if (ok && direct!!.contentEquals(reference)) {
+                    if (++pointerlessChecks >= POINTERLESS_CHECKS) pointerless = 1
+                } else pointerless = -1
+                return IntArray(len) { bitRev(reference[it].toInt() and 0xff) }
+            }
+        }
         val raw = com.i2cRead(chip.i2c, 0x00, len)
         return IntArray(len) { bitRev(raw[it].toInt() and 0xff) }
     }
@@ -294,6 +320,7 @@ class R82xx(
         const val XTAL_HZ = 28_800_000L
         const val IF_HZ = 3_570_000L
         const val CHIP_ID = 0x69
+        private const val POINTERLESS_CHECKS = 3
         private const val FILT_HP_BW1 = 350_000
         private const val FILT_HP_BW2 = 380_000
         /** IF low-pass corners selectable in reg 0x0b[3:0] (15 - index). */

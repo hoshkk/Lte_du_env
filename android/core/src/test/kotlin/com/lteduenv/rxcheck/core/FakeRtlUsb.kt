@@ -14,7 +14,12 @@ class FakeRtlUsb(
     override val product: String? = "Blog V4",
     var lockOnFirstRead: Boolean = true,
     var vcoFineTune: Int = 1,
+    /** R82xx behaviour: reads start at register 0 regardless of the pointer. */
+    var readStartsAtZero: Boolean = true,
 ) : UsbIo {
+    /** I2C register pointer, for chips whose reads continue from it. */
+    var pointer = 0
+    var bulkCalls = 0
     val tunerRegs = IntArray(32)
     val demod = HashMap<Int, Int>()
     var repeaterOpen = false
@@ -33,7 +38,8 @@ class FakeRtlUsb(
                 if (length > 1) {
                     for (i in 1 until length) tunerRegs[bytes[0] + i - 1] = bytes[i]
                     i2cWrites += bytes
-                }
+                    pointer = bytes[0] + length - 1
+                } else pointer = bytes[0]
             }
             value and 0xff == 0x20 -> { // demod register
                 demodWrites++
@@ -53,17 +59,23 @@ class FakeRtlUsb(
             if (value != tunerAddr || !repeaterOpen) return -1
             val raw = IntArray(5)
             raw[0] = R82xx.CHIP_ID
-            if (length == 3) {
-                lockReads++
-                if (lockOnFirstRead || lockReads % 2 == 0) raw[2] = R82xx.bitRev(0x40)
-            }
+            // Lock depends on the programmed VCO current, not on how often status is read:
+            // a "hard" PLL only locks after the driver's retry lowers the current to 3 (0x60).
+            if (lockOnFirstRead || (tunerRegs[0x12] and 0xe0) == 0x60) raw[2] = R82xx.bitRev(0x40)
+            if (length == 3) lockReads++
             raw[4] = R82xx.bitRev(vcoFineTune shl 4)
-            for (i in 0 until length) buffer[i] = raw[i].toByte()
+            val start = if (readStartsAtZero) 0 else pointer
+            for (i in 0 until length) {
+                val r = start + i
+                buffer[i] = (if (r < 5) raw[r] else tunerRegs[r and 31]).toByte()
+            }
+            if (!readStartsAtZero) pointer = start + length
         }
         return length
     }
 
     override fun bulkIn(buffer: ByteArray, length: Int, timeoutMs: Int): Int {
+        bulkCalls++
         buffer.fill(127.toByte(), 0, length)
         return length
     }

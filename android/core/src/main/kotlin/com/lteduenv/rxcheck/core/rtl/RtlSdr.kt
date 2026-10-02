@@ -54,20 +54,22 @@ class RtlSdr private constructor(
 
     override fun capture(out: FloatArray, discardSamples: Int): Int {
         com.resetFifo()
-        var drop = discardSamples * 2
-        while (drop > 0) drop -= com.bulkRead(raw, align(min(drop, raw.size)))
+        // Transition samples and the capture come in the same bulk reads; the
+        // first [skip] bytes are dropped exactly as a separate discard read would.
+        var skip = discardSamples * 2
         var pos = 0
         var clipped = 0
         while (pos < out.size) {
-            val want = align(min(out.size - pos, raw.size))
-            val n = com.bulkRead(raw, want)
-            val use = min(n and 1.inv(), out.size - pos)
-            for (i in 0 until use) {
+            val want = align(min(skip + out.size - pos, raw.size))
+            val n = com.bulkRead(raw, want) and 1.inv()
+            var i = min(skip, n)
+            skip -= i
+            while (i < n && pos < out.size) {
                 val b = raw[i].toInt() and 0xff
                 if (b == 0 || b == 255) clipped++
-                out[pos + i] = (b - 127.4f) / 128f
+                out[pos++] = (b - 127.4f) / 128f
+                i++
             }
-            pos += use
         }
         return clipped
     }

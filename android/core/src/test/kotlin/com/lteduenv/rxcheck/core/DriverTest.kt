@@ -66,14 +66,52 @@ class DriverTest {
     @Test fun fastRetuneUsesFewControlTransfersAndNoRepeaterToggles() {
         val usb = FakeRtlUsb()
         val sdr = RtlSdr.open(usb, fastTune = true)
-        sdr.tune(903_000_000L)
+        // The first status reads verify pointer-less reads against normal ones.
+        for (f in listOf(903_000_000L, 904_800_000L, 906_600_000L)) sdr.tune(f)
+        assertTrue(sdr.tuner.pointerlessReads)
         val out0 = usb.outCount; val in0 = usb.inCount; val d0 = usb.demodWrites
-        sdr.tune(904_800_000L)
+        sdr.tune(908_400_000L)
         val transfers = usb.outCount - out0 + usb.inCount - in0
-        // autotune 128k, status read (2), PLL burst, lock read (2), autotune 8k
-        assertEquals(7, transfers)
+        // autotune 128k, status read, PLL burst, lock read, autotune 8k
+        assertEquals(5, transfers)
         assertEquals(0, usb.demodWrites - d0)
         assertTrue(usb.repeaterOpen)
+    }
+
+    /** A chip whose reads follow the register pointer must fall back to pointer writes. */
+    @Test fun pointerlessReadsFallBackSafely() {
+        val usb = FakeRtlUsb(readStartsAtZero = false)
+        val refUsb = FakeRtlUsb(readStartsAtZero = false)
+        val sdr = RtlSdr.open(usb, fastTune = true)
+        val ref = RtlSdr.open(refUsb, fastTune = false)
+        for (f in sweepFreqs) {
+            assertTrue(sdr.tune(f)); assertTrue(ref.tune(f))
+            assertArrayEquals(refUsb.tunerRegs, usb.tunerRegs)
+        }
+        assertFalse(sdr.tuner.pointerlessReads)
+        val out0 = usb.outCount; val in0 = usb.inCount
+        sdr.tune(904_800_000L); sdr.tune(906_600_000L)
+        assertEquals(7, (usb.outCount - out0 + usb.inCount - in0) / 2)
+    }
+
+    @Test fun pointerlessReadsKeepRegistersIdentical() {
+        val fastUsb = FakeRtlUsb(lockOnFirstRead = false); val refUsb = FakeRtlUsb(lockOnFirstRead = false)
+        val fast = RtlSdr.open(fastUsb, fastTune = true)
+        val ref = RtlSdr.open(refUsb, fastTune = false)
+        repeat(2) { for (f in sweepFreqs) {
+            assertTrue(fast.tune(f)); assertTrue(ref.tune(f))
+            assertArrayEquals(refUsb.tunerRegs, fastUsb.tunerRegs)
+        } }
+        assertTrue(fast.tuner.pointerlessReads)
+    }
+
+    @Test fun discardAndCaptureShareBulkReads() {
+        val usb = FakeRtlUsb()
+        val sdr = RtlSdr.open(usb)
+        sdr.tune(909_300_000L)
+        val before = usb.bulkCalls
+        sdr.capture(FloatArray(2 * 1024), 2048) // 4096 + 2048 bytes
+        assertEquals(1, usb.bulkCalls - before)
     }
 
     @Test fun referenceRetuneTogglesRepeater() {

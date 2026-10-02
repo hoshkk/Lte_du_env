@@ -95,6 +95,9 @@ class RtlCom(private val io: UsbIo, private val clock: () -> Long = System::nano
         return read(addr, BLOCK_I2C shl 8, length)
     }
 
+    /** I2C read without first writing a register address (device-defined start). */
+    fun i2cReadDirect(addr: Int, length: Int): ByteArray = read(addr, BLOCK_I2C shl 8, length)
+
     fun setGpioOutput(gpio: Int) {
         val bit = 1 shl gpio
         setSysReg(GPD, getSysReg(GPD) and bit.inv())

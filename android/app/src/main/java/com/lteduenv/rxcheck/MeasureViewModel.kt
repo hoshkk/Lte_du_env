@@ -22,7 +22,7 @@ import com.lteduenv.rxcheck.data.Store
 import com.lteduenv.rxcheck.usb.UsbAccess
 import com.lteduenv.rxcheck.usb.UsbPermissionDenied
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -73,6 +73,26 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<UiState> = _state
     private var job: Job? = null
 
+    /**
+     * One dedicated, high-priority thread for USB work. Each retune is a chain of
+     * blocking control transfers; waking up promptly after each one is most of
+     * what can still be gained without changing what is sent to the dongle.
+     */
+    private val measureExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread({
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
+            r.run()
+        }, "rx-measure")
+    }
+    private val measureDispatcher = measureExecutor.asCoroutineDispatcher()
+
+    override fun onCleared() {
+        // Let the measurement finish its cleanup (closing the dongle) before the thread goes.
+        val j = job
+        if (j == null) measureExecutor.shutdown()
+        else { j.invokeOnCompletion { measureExecutor.shutdown() }; j.cancel() }
+    }
+
     /** Auto-fit progress, touched only by the measurement coroutine and [autoFit]. */
     @Volatile private var autoFitRequested = false
 
@@ -83,7 +103,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
     fun start(demo: Boolean) {
         if (job?.isActive == true) return
         _state.update { it.copy(running = true, demo = demo, error = null, status = "연결 중…") }
-        job = viewModelScope.launch(Dispatchers.IO) {
+        job = viewModelScope.launch(measureDispatcher) {
             var attempt = 0
             try {
                 while (currentCoroutineContext().isActive) {
