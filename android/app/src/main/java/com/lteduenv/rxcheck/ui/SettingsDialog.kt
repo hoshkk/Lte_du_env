@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -47,7 +48,7 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
     var chBw by remember { mutableStateOf(current.channelBwMhz.toString()) }
     var rbw by remember { mutableStateOf(current.rbwKhz.toString()) }
     var avg by remember { mutableStateOf(current.averages.toString()) }
-    var vbw by remember { mutableStateOf(current.vbwKhz?.toString() ?: "") }
+    var vbw by remember { mutableStateOf(current.vbwKhz?.toString() ?: "0") }
     var offset by remember { mutableStateOf(current.offsetDb.toString()) }
     var threshold by remember { mutableStateOf(current.thresholdDb.toString()) }
     var ref by remember { mutableStateOf(current.refLevelDb.toString()) }
@@ -67,8 +68,10 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
     fun build(): Settings? {
         val nums = listOf(center, span, chBw, rbw, offset, threshold, ref, div).map { it.trim().toDoubleOrNull() }
         val a = avg.trim().toIntOrNull(); val st = settle.trim().toIntOrNull()
+        // VBW 0 (or empty) = AUTO: the averaging count below is used as is.
         val vb = vbw.trim().takeIf { it.isNotEmpty() && !it.equals("AUTO", ignoreCase = true) }
-        val vbv = vb?.toDoubleOrNull()
+        val vbv = vb?.toDoubleOrNull()?.takeIf { it > 0 }
+        if (vb != null && vb.toDoubleOrNull() == null) { error = "VBW 입력을 확인하세요"; return null }
         if (nums.any { it == null } || a == null || st == null || (vb != null && vbv == null)) { error = "숫자 입력을 확인하세요"; return null }
         val v = nums.map { it!! }
         return current.copy(
@@ -144,49 +147,41 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
                                 "커플러·케이블 손실 등 알고 있는 값만 넣으세요. Offset으로 dBm 교정이 되지는 않습니다.", fontSize = 11.sp, color = Dim)
                         }
                         2 -> {
-                            // RBW: only values the FFT can actually give (2.4 MS/s, FFT 64..16384).
-                            val draft = current.copy(rbwKhz = rbw.toDoubleOrNull() ?: current.rbwKhz,
+                            // RBW: the FFT gives the nearest achievable value (2.4 MS/s, FFT 64..16384).
+                            val draft = current.copy(rbwKhz = rbw.toDoubleOrNull()?.takeIf { it > 0 } ?: current.rbwKhz,
                                 averages = avg.toIntOrNull()?.coerceIn(1, 256) ?: current.averages,
-                                vbwKhz = vbw.trim().toDoubleOrNull())
+                                vbwKhz = vbw.trim().toDoubleOrNull()?.takeIf { it > 0 })
                             val rbwHz = draft.rbwActualHz()
-                            Text("RBW (분해능 대역폭)", fontSize = 13.sp)
-                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Settings.RBW_CHOICES_KHZ.forEach { v ->
-                                    FilterChip(selected = kotlin.math.abs(rbwHz / 1e3 - v) < 1e-6, onClick = { rbw = v.toString() },
-                                        label = { Text(khz(v * 1e3)) })
-                                }
-                            }
                             val n = SweepPlan.fftSizeFor(rbwHz, Settings.SAMPLE_RATE)
-                            Text("RBW ${khz(rbwHz)} · ENBW ${khz(Settings.SAMPLE_RATE * 1.5 / n)} · FFT ${n}점" +
-                                (rbw.toDoubleOrNull()?.takeIf { kotlin.math.abs(it - rbwHz / 1e3) > 0.01 }?.let { " (요청 ${it}k → 적용)" } ?: ""),
-                                fontSize = 12.sp)
-                            Text("RBW가 좁을수록 약한 협대역 신호가 잡음 위로 잘 보이고 가까운 신호가 분리되지만, 구간당 수집 시간이 늘어납니다. " +
-                                "채널 전력은 ENBW로 보정하므로 RBW와 관계없이 같은 값입니다. 54k보다 넓은 RBW는 이 동글(2.4 MS/s)에서 만들 수 없습니다.",
-                                fontSize = 11.sp, color = Dim)
-
-                            Text("VBW (비디오 대역폭)", fontSize = 13.sp)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Field("RBW 목표 (kHz)", rbw, { rbw = it }, Modifier.weight(1f))
+                                Field("VBW (kHz, 0=AUTO)", vbw, { vbw = it }, Modifier.weight(1f))
+                            }
                             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                FilterChip(selected = draft.vbwKhz == null, onClick = { vbw = "" }, label = { Text("AUTO (평균 직접)") })
-                                Settings.VBW_RATIOS.forEach { r ->
+                                listOf(1.6875, 6.75, 13.5, 27.0, 54.0).forEach { v ->
+                                    FilterChip(selected = kotlin.math.abs(rbwHz / 1e3 - v) < 1e-6, onClick = { rbw = v.toString() },
+                                        label = { Text("RBW ${khz(v * 1e3).removeSuffix("k")}") })
+                                }
+                                listOf(3, 10, 30).forEach { r ->
                                     val v = rbwHz / r / 1e3
                                     FilterChip(selected = draft.vbwKhz != null && kotlin.math.abs(draft.vbwKhz!! - v) < 1e-6,
-                                        onClick = { vbw = v.toString() }, label = { Text(khz(v * 1e3)) })
+                                        onClick = { vbw = v.toString() }, label = { Text("VBW ${khz(v * 1e3).removeSuffix("k")}") })
+                                }
+                                FilterChip(selected = draft.vbwKhz == null, onClick = { vbw = "0" }, label = { Text("VBW AUTO") })
+                            }
+                            Text("적용 예상: RBW ${khz(rbwHz)}Hz · ENBW ${khz(Settings.SAMPLE_RATE * 1.5 / n)}Hz · FFT $n · " +
+                                "VBW ${khz(draft.vbwActualHz())}Hz (평균 ${draft.effectiveAverages()}회)", fontSize = 13.sp)
+                            if (draft.vbwKhz == null) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Field("평균 (AUTO일 때)", avg, { avg = it }, Modifier.width(150.dp))
+                                listOf(1, 4, 16, 64).forEach { v ->
+                                    FilterChip(selected = avg.toIntOrNull() == v, onClick = { avg = v.toString() }, label = { Text("$v") })
                                 }
                             }
-                            Field("VBW (kHz, 비우면 AUTO)", vbw, { vbw = it })
-                            if (draft.vbwKhz == null) {
-                                Field("평균 (구간당 FFT 프레임 수)", avg, { avg = it })
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    listOf(1, 4, 16, 64).forEach { v ->
-                                        FilterChip(selected = avg.toIntOrNull() == v, onClick = { avg = v.toString() }, label = { Text("평균 $v") })
-                                    }
-                                }
-                            }
-                            Text("적용: VBW ${khz(draft.vbwActualHz())} = RBW ÷ 평균 ${draft.effectiveAverages()}회", fontSize = 12.sp)
-                            Text("FFT 방식이라 아날로그 VBW 필터 대신 같은 효과의 전력 평균을 씁니다(평균 N = RBW ÷ VBW, 1~256). " +
-                                "VBW를 좁히면 잡음 출렁임이 줄어 레벨 읽기가 안정되지만 구간당 시간이 늘고, 짧은 신호는 평균에 묻힙니다" +
-                                "(짧은 신호는 불요파 목록의 '프레임 최대'와 Max Hold로 남습니다). 전력 평균이라 로그 평균처럼 잡음이 2.5 dB 낮게 읽히지 않습니다.",
-                                fontSize = 11.sp, color = Dim)
+                            Text("RBW는 가능한 FFT 크기 중 가장 가까운 값을 적용합니다(최대 54 kHz). VBW는 구간마다 FFT 프레임의 선형 전력을 " +
+                                "RBW÷VBW회 평균하는 소프트웨어 방식이며, 계측기의 같은 숫자와 성능이 똑같지는 않습니다. " +
+                                "VBW를 좁히면 잡음이 매끈해지지만 스윕이 느려지고, 짧은 신호는 '프레임 최대'와 Max Hold로 확인하세요.",
+                                fontSize = 12.sp, color = Dim)
+                            Text("입력 범위: RBW 0.1–300 kHz(적용 0.21–54) / VBW 0(AUTO) 또는 0.001–300 kHz", fontSize = 12.sp, color = Dim)
                         }
                         3 -> {
                             Row(verticalAlignment = Alignment.CenterVertically) {
