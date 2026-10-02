@@ -114,6 +114,7 @@ fun SpectrumApp(vm:SpectrumViewModel=viewModel()) {
         Text(s.analysis,color=if(s.analysis.contains("의심"))AnalyzerColors.Warn else AnalyzerColors.TextSecondary,fontSize=12.sp,maxLines=3)
         if(s.selectedMode==FieldMode.EQUIPMENT)OutlinedButton(enabled=s.running && s.analysisFrame!=null,onClick={vm.saveAnalysisBaseline()}){Text("현재를 기준으로 저장")}
         Text("Ref ${s.config.refLevelDb.fmt(1)} · Offset ${s.config.refLevelOffsetDb.fmt(1)} dB · ${s.config.dbPerDiv.fmt(1)} dB/div · RBW 목표 ${s.config.rbwKhz.fmt(2)} kHz · VBW ${if(s.config.vbwKhz==0.0)"OFF" else "${s.config.vbwKhz.fmt(2)} kHz (SW)"}",fontSize=11.sp,maxLines=1)
+        Text("SPAN ${s.config.spanMhz.fmt(3)} MHz · START ${(s.config.centerMhz-s.config.spanMhz/2).fmt(3)} · CENTER ${s.config.centerMhz.fmt(3)} · STOP ${(s.config.centerMhz+s.config.spanMhz/2).fmt(3)} MHz · BW ${s.config.integrationBwMhz.fmt(1)} MHz",fontSize=11.sp,maxLines=2)
         Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(5.dp)) {
             s.markers.forEach{m->FilterChip(selected=m.index==s.selectedMarker,onClick={vm.selectMarker(m.index)},label={Text(if(m.enabled)"M${m.index} ${m.levelDb.toDouble().fmt(1)}" else "M${m.index}",fontSize=11.sp)})}
             TextButton(enabled=frame!=null,onClick={vm.peak();feedback("선택 마커를 최대 피크로 이동했습니다")}){Text("Peak")}
@@ -121,7 +122,8 @@ fun SpectrumApp(vm:SpectrumViewModel=viewModel()) {
             SelectionButton("Ch Power",s.config.channelPowerEnabled,onClick={vm.toggleChannelPower()})
         }
         SpectrumTraceCanvas(s.frame,s.config.refLevelDb,s.markers,s.selectedMarker,
-            Modifier.weight(1f).fillMaxWidth(),dbSpan=s.config.dbPerDiv*8,staleBeforeMs=s.frame?.startedMs?:0,heldFrame=if(s.maxHold)s.held else null,onTapFrequency={vm.mark(it)})
+            Modifier.weight(1f).fillMaxWidth(),dbSpan=s.config.dbPerDiv*8,staleBeforeMs=s.frame?.startedMs?:0,heldFrame=if(s.maxHold)s.held else null,onTapFrequency={vm.mark(it)},
+            displayStartMhz=s.config.centerMhz-s.config.spanMhz/2,displayStopMhz=s.config.centerMhz+s.config.spanMhz/2,channelCenterMhz=s.config.centerMhz,channelBwMhz=s.config.integrationBwMhz)
         if(s.config.channelPowerEnabled)Text(
             if(cp==null)"Ch Power: 측정 대기 또는 Integration BW가 관측 범위를 벗어납니다"
             else "Total Ch Power ${cp.totalDb.fmt(2)} ${s.frame?.displayUnit} · PSD ${cp.psdDbPerMhz.fmt(2)} /MHz · IBW ${s.config.integrationBwMhz.fmt(2)} MHz · 완료 스윕${if((s.frame?.segmentCount?:1)>1)" / 순차 합산" else ""}",fontSize=11.sp,maxLines=2)
@@ -251,7 +253,7 @@ private fun MeasurementSettings(c:SweepConfig,frame:SpectrumFrame?,vm:SpectrumVi
                         }
                         3->{
                             Row{Checkbox(channel,{channel=it});Text("Channel Power 표시")}
-                            NumberField("Integration BW (MHz)",ibw,{ibw=it})
+                            NumberField("채널 BW (MHz)",ibw,{ibw=it})
                             Row(Modifier.horizontalScroll(rememberScrollState())){
                                 listOf(1.0,10.0,20.0,30.0).forEach{v->SelectionButton("${v.toInt()} MHz",ibw.toDoubleOrNull()==v,onClick={ibw=v.toString()})}
                             }

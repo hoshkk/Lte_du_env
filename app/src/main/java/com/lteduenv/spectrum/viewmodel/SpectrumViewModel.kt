@@ -107,7 +107,7 @@ class SpectrumViewModel:ViewModel() {
     fun csv():String {
         val s=state.value;val f=s.shownFrame?:return ""
         return buildString {
-            appendLine("# SpectrumCheck 2.7.2-fastgate; ${f.source}; ${f.displayUnit}; max_hold=${s.maxHold}; dc_removed=${f.dcRemoved}")
+            appendLine("# SpectrumCheck 2.7.3-band; ${f.source}; ${f.displayUnit}; max_hold=${s.maxHold}; dc_removed=${f.dcRemoved}")
             f.timingNs?.let { appendLine("# timing_raw=" + it.joinToString(";") + "; order=tune_ns,settle_ns,reset_ns,discard_ns,read_ns,dsp_ns,mux_ns,pll_ns,i2c_write_ns,i2c_read_ns,other_usb_ns,write_count,read_count,other_count") }
             appendLine("# sample_rate_hz=${f.sampleRateHz}; fft=${f.fftSize}; rbw_hz=${f.rbwHz}; enbw_hz=${f.enbwHz}; vbw_khz=${f.vbwKhz}; offset_db=${f.offsetDb}; gain_step=${f.gainStep}; tuner_agc=${f.autoGain}; completed_segments=${f.completedSegments}; sweep_ms=${f.lastSweepMs}; tune_settle_ms=${s.config.tuneSettleMs}; native_settle_ms=${s.config.nativeSettleMs}; fast_usb_tune=${s.config.fastUsbTune}; segments=${f.segmentCount}; start_ms=${f.startedMs}; end_ms=${f.timestampMs}; clipping=${f.clippedFraction}")
             appendLine("# rbw_requested_khz=${s.config.rbwKhz}; ref_level=${s.config.refLevelDb}; db_per_div=${s.config.dbPerDiv}; integration_bw_mhz=${s.config.integrationBwMhz}")

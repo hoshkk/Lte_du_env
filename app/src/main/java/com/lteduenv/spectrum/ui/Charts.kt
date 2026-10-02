@@ -88,13 +88,17 @@ fun SpectrumTraceCanvas(
     staleBeforeMs: Long = 0,
     heldFrame: SpectrumFrame? = null,
     onTapFrequency: (Double) -> Unit = {},
+    displayStartMhz: Double = 0.0,
+    displayStopMhz: Double = 0.0,
+    channelCenterMhz: Double = 0.0,
+    channelBwMhz: Double = 0.0,
 ) {
     val yLabels = remember(refLevelDb, dbSpan) {
         (0..GRID_ROWS).map { row -> "%.1f".format(refLevelDb - row * (dbSpan / GRID_ROWS)) }
     }
-    val xLabels = remember(frame?.startMhz, frame?.stopMhz) {
-        val start = frame?.startMhz ?: 0.0
-        val stop = frame?.stopMhz ?: 0.0
+    val xLabels = remember(frame?.startMhz, frame?.stopMhz, displayStartMhz, displayStopMhz) {
+        val start = frame?.startMhz ?: displayStartMhz
+        val stop = frame?.stopMhz ?: displayStopMhz
         (0..4).map { i -> "%.1f".format(start + i * (stop - start) / 4) }
     }
 
@@ -111,6 +115,25 @@ fun SpectrumTraceCanvas(
             val (xs, ys) = gridPath(size.width, size.height)
             xs.forEach { x -> drawLine(AnalyzerColors.GridLine, androidx.compose.ui.geometry.Offset(x, 0f), androidx.compose.ui.geometry.Offset(x, size.height), 1f) }
             ys.forEach { y -> drawLine(AnalyzerColors.GridLine, androidx.compose.ui.geometry.Offset(0f, y), androidx.compose.ui.geometry.Offset(size.width, y), 1f) }
+
+            val start = frame?.startMhz ?: displayStartMhz
+            val stop = frame?.stopMhz ?: displayStopMhz
+            if(stop > start && channelBwMhz > 0.0) {
+                val lo = channelCenterMhz-channelBwMhz/2
+                val hi = channelCenterMhz+channelBwMhz/2
+                val a = maxOf(start,lo)
+                val b = minOf(stop,hi)
+                if(b > a) {
+                    val x1 = ((a-start)/(stop-start)*size.width).toFloat()
+                    val x2 = ((b-start)/(stop-start)*size.width).toFloat()
+                    val shade = androidx.compose.ui.graphics.Color(0xFF39A982)
+                    drawRect(shade.copy(alpha=0.13f),androidx.compose.ui.geometry.Offset(x1,0f),androidx.compose.ui.geometry.Size(x2-x1,size.height))
+                    listOf(lo,hi).filter { it in start..stop }.forEach { edge ->
+                        val x = ((edge-start)/(stop-start)*size.width).toFloat()
+                        drawLine(shade.copy(alpha=0.6f),androidx.compose.ui.geometry.Offset(x,0f),androidx.compose.ui.geometry.Offset(x,size.height),1.5f)
+                    }
+                }
+            }
 
             val f = frame
             val held=heldFrame

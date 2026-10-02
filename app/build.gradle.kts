@@ -14,8 +14,8 @@ android {
         minSdk = 26
         targetSdk = 34
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
-        versionCode = 27
-        versionName = "2.7.2-fastgate"
+        versionCode = 28
+        versionName = "2.7.3-band"
     }
 
     buildTypes {
