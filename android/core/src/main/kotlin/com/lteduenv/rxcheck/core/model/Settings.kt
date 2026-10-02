@@ -66,6 +66,8 @@ data class Settings(
     val dcShift: Boolean = false,
     /** Also show channel power with 28.8 MHz harmonics / recorded internal spurs replaced (raw stays primary). */
     val internalCorrection: Boolean = false,
+    /** Show the waterfall (time/frequency history) under the spectrum. Display only. */
+    val waterfall: Boolean = false,
     val refLevelDb: Double = -20.0,
     val dbPerDiv: Double = 10.0,
 ) {

@@ -47,6 +47,18 @@ data class SweepPlan(
         /** Fraction of each capture used: the IF/decimation filter rolls off at the edges. */
         const val USABLE_FRACTION = 0.75
 
+        /**
+         * Widest span that [create] with dcShift=true takes in one capture with the
+         * tuned centre (DC bin) outside the span: no retune between sweeps and no
+         * DC residue on screen. About 0.8-0.9 MHz at 2.4 MS/s.
+         */
+        fun zoomSpanHz(rbwHz: Double, sampleRate: Int = 2_400_000): Double {
+            val n = fftSizeFor(rbwHz, sampleRate)
+            val usable = (n * USABLE_FRACTION).toInt() and 1.inv()
+            // usable/2 - 2 points: the DC bin and its neighbours land past the span edge.
+            return (usable / 2 - 3) * sampleRate.toDouble() / n
+        }
+
         /** Hann -3 dB bandwidth is about 1.44 bins; picks the FFT size closest to the target RBW. */
         fun fftSizeFor(rbwHz: Double, sampleRate: Int): Int =
             (6..14).map { 1 shl it }.minBy { abs(ln(1.44 * sampleRate / it / rbwHz)) }

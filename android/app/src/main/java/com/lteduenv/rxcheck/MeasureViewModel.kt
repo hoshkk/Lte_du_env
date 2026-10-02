@@ -7,6 +7,10 @@ import com.lteduenv.rxcheck.core.analysis.Analysis
 import com.lteduenv.rxcheck.core.analysis.AutoFit
 import com.lteduenv.rxcheck.core.analysis.Evaluate
 import com.lteduenv.rxcheck.core.analysis.Results
+import com.lteduenv.rxcheck.core.diag.Check
+import com.lteduenv.rxcheck.core.diag.SelfTest
+import com.lteduenv.rxcheck.core.diag.SettleProbe
+import com.lteduenv.rxcheck.core.view.Waterfall
 import com.lteduenv.rxcheck.core.model.Band
 import com.lteduenv.rxcheck.core.model.Mode
 import com.lteduenv.rxcheck.core.model.Settings
@@ -37,6 +41,16 @@ import java.util.Locale
 
 data class Marker(val index: Int, val freqHz: Double? = null)
 
+/** Self-test / settle-probe state for the diagnostics dialog. */
+data class DiagState(
+    val busy: String? = null,
+    val checks: List<Check>? = null,
+    val settle: SettleProbe.Result? = null,
+    val error: String? = null,
+    /** Results came from the demo simulator, not a dongle. */
+    val demo: Boolean = false,
+)
+
 data class UiState(
     val settings: Settings,
     val running: Boolean = false,
@@ -66,6 +80,13 @@ data class UiState(
     val sniff: Boolean = false,
     /** Highest level of the first sweep after sniffing started (or after "다시 기준"). */
     val sniffRefDb: Double? = null,
+    /** Beep faster as the level rises (sniffing). */
+    val sniffSound: Boolean = true,
+    /** Tap-zoom active: one capture around the tapped frequency, real-time. */
+    val zoomed: Boolean = false,
+    /** Bumped when the waterfall gets a row (the buffer itself is [MeasureViewModel.waterfall]). */
+    val waterfallVersion: Int = 0,
+    val diag: DiagState = DiagState(),
 ) {
     /** Highest finite level of the last completed sweep and its frequency (dB incl. offset). */
     val peakNow: Pair<Double, Double>? get() {
@@ -102,6 +123,12 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
         if (j == null) measureExecutor.shutdown()
         else { j.invokeOnCompletion { measureExecutor.shutdown() }; j.cancel() }
     }
+
+    /** Waterfall rows; written on the measurement thread, drawn by the UI. */
+    val waterfall = Waterfall()
+
+    /** 1 = self-test, 2 = settle probe; picked up by the measurement loop. */
+    @Volatile private var diagRequest = 0
 
     /** Auto-fit progress, touched only by the measurement coroutine and [autoFit]. */
     @Volatile private var autoFitRequested = false
@@ -180,6 +207,13 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
                 rx.settleMs = s.settleMs
             }
             val p = SweepPlan.create(s.centerMhz * 1e6, s.spanMhz * 1e6, s.rbwKhz * 1e3, rx.sampleRate, s.dcShift)
+            val req = diagRequest
+            if (req != 0) {
+                diagRequest = 0
+                runDiag(req, rx, engine, s, p)
+                applied = null // gain and tuning were touched: re-apply below
+                continue
+            }
             if (p != plan || baselineKeyChanged(applied, s)) {
                 if (p != plan) _state.update { it.copy(live = null, last = null, hold = null, results = null) }
                 plan = p
@@ -205,11 +239,12 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
             val hold = if (cur.settings.maxHold) Analysis.maxHold(cur.hold, trace) else null
             history += trace
             if (history.size > 3) history.removeAt(0)
+            if (cur.settings.waterfall) waterfall.add(trace)
             val results = Evaluate.run(cur.settings, trace, hold, cur.baseline, history.toList(), cur.internal)
             _state.update {
                 val ref = if (it.sniff && it.sniffRefDb == null && !trace.clipped)
                     Analysis.peakFreq(trace)?.let { f -> Analysis.levelAt(trace, f, it.settings.offsetDb) } else it.sniffRefDb
-                it.copy(sniffRefDb = ref, live = trace, livePoints = trace.points, last = trace, hold = hold,
+                it.copy(sniffRefDb = ref, waterfallVersion = it.waterfallVersion + 1, live = trace, livePoints = trace.points, last = trace, hold = hold,
                     results = results, timing = trace.timing, sweeps = it.sweeps + 1, clipped = trace.clipped,
                     status = when {
                         trace.clipped -> "입력 클리핑 감지 · 이득을 낮추거나 감쇠기를 사용하세요"
@@ -251,7 +286,43 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Settings that change what is captured (not just how it is drawn). */
     private fun Settings.captureKey() = copy(refLevelDb = 0.0, dbPerDiv = 10.0, offsetDb = 0.0, thresholdDb = 0.0,
-        maxHold = false, channelPower = false, band = null, mode = Mode.REVERSE)
+        maxHold = false, channelPower = false, band = null, mode = Mode.REVERSE, waterfall = false)
+
+    /** Runs a diagnostic on the measurement thread with the open receiver. */
+    private fun runDiag(req: Int, rx: Receiver, engine: SweepEngine, s: Settings, p: SweepPlan) {
+        val setGain: ((Int?) -> Unit)? = (rx as? RtlSdr)?.let { r -> { g: Int? -> r.setGain(g) } }
+        val demo = rx !is RtlSdr
+        try {
+            when (req) {
+                1 -> {
+                    val checks = SelfTest.run(rx, Math.round(s.centerMhz * 1e6), setGain, s.gainStep)
+                    _state.update { it.copy(diag = it.diag.copy(busy = null, checks = checks, error = null, demo = demo)) }
+                }
+                2 -> {
+                    val r = SettleProbe.run(rx, p, engine.discardSamples, setGain, s.gainStep)
+                    _state.update { it.copy(diag = it.diag.copy(busy = null, settle = r, error = null, demo = demo)) }
+                }
+            }
+        } catch (e: IOException) {
+            throw e
+        } catch (e: Exception) {
+            _state.update { it.copy(diag = it.diag.copy(busy = null, error = e.message ?: e.toString())) }
+        } finally {
+            engine.invalidateTuning()
+        }
+    }
+
+    fun requestSelfTest() = requestDiag(1, "자가점검 중…")
+    fun requestSettleProbe() = requestDiag(2, "전환 안정 시간 측정 중…")
+
+    private fun requestDiag(kind: Int, label: String) {
+        if (!_state.value.running) {
+            _state.update { it.copy(diag = it.diag.copy(error = "측정 중에만 실행할 수 있습니다 (▶ 측정 시작 후)")) }
+            return
+        }
+        _state.update { it.copy(diag = it.diag.copy(busy = label, error = null)) }
+        diagRequest = kind
+    }
 
     private fun baselineKeyChanged(a: Settings?, b: Settings) =
         a == null || a.gainStep != b.gainStep || a.narrowIf != b.narrowIf || a.dcPatch != b.dcPatch ||
@@ -343,6 +414,50 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
 
     fun resetHold() = _state.update { it.copy(hold = null) }
 
+    fun toggleWaterfall() {
+        val s = _state.value.settings
+        if (s.waterfall) waterfall.clear()
+        commit(s.copy(waterfall = !s.waterfall), clearTraces = false)
+    }
+
+    /** Settings before a tap-zoom, restored by [unzoom]. */
+    private var beforeZoom: Settings? = null
+
+    /**
+     * Long press on the graph: one capture (about 0.8-0.9 MHz) centred on the
+     * strongest point near the press, with the receiver's DC bin outside the
+     * span, so it refreshes without any retune. Again (or [unzoom]) goes back.
+     */
+    fun zoomAt(freqHz: Double) {
+        val st = _state.value
+        if (st.zoomed) { unzoom(); return }
+        val s = st.settings
+        val f = st.shown?.let { snapToPeak(it, freqHz, 300e3) } ?: freqHz
+        val rbwHz = minOf(s.rbwActualHz(), 13_500.0)
+        val span = SweepPlan.zoomSpanHz(rbwHz) / 1e6
+        val c = (f / 1e6).coerceIn(24.0 + span, 1766.0 - span)
+        beforeZoom = s
+        commit(s.copy(centerMhz = c, spanMhz = span, rbwKhz = rbwHz / 1e3, dcShift = true), clearTraces = true)
+        _state.update { it.copy(zoomed = true) }
+    }
+
+    fun unzoom() {
+        beforeZoom?.let { commit(it, clearTraces = true) }
+        beforeZoom = null
+        _state.update { it.copy(zoomed = false) }
+    }
+
+    private fun snapToPeak(t: Trace, f: Double, radiusHz: Double): Double? {
+        var best = -1
+        for (i in 0 until t.points) {
+            if (kotlin.math.abs(t.freqAt(i) - f) > radiusHz || !t.levelsDb[i].isFinite()) continue
+            if (best < 0 || t.levelsDb[i] > t.levelsDb[best]) best = i
+        }
+        return if (best < 0) null else t.freqAt(best)
+    }
+
+    fun toggleSniffSound() = _state.update { it.copy(sniffSound = !it.sniffSound) }
+
     /** Settings in use before near-field sniffing started, restored when it ends. */
     private var beforeSniff: Settings? = null
 
@@ -353,6 +468,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
      * restores the previous settings.
      */
     fun toggleSniff() {
+        if (_state.value.zoomed) unzoom()
         val st = _state.value
         if (st.sniff) {
             beforeSniff?.let { commit(it, clearTraces = true) }

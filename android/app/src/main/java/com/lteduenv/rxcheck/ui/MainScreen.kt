@@ -30,6 +30,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -84,11 +87,12 @@ private fun Validity.color() = when (this) {
 fun MainScreen(state: UiState, vm: MeasureViewModel, onSaveCsv: () -> Unit, onShareCsv: () -> Unit) {
     var showSettings by remember { mutableStateOf(false) }
     var showPresets by remember { mutableStateOf(false) }
+    var showDiag by remember { mutableStateOf(false) }
     var showPanel by rememberSaveable { mutableStateOf(true) }
     val s = state.settings
 
     Column(Modifier.fillMaxSize().background(ChartColors.background).padding(horizontal = 6.dp, vertical = 4.dp)) {
-        TopBar(state, vm, onSettings = { showSettings = true }, onPresets = { showPresets = true },
+        TopBar(state, vm, onSettings = { showSettings = true }, onPresets = { showPresets = true }, onDiag = { showDiag = true },
             onSaveCsv = onSaveCsv, onShareCsv = onShareCsv)
         InfoLine(state)
         BoxWithConstraints(Modifier.fillMaxWidth().weight(1f).padding(top = 2.dp)) {
@@ -120,6 +124,8 @@ fun MainScreen(state: UiState, vm: MeasureViewModel, onSaveCsv: () -> Unit, onSh
         vm.apply(new).also { if (it == null) showSettings = false }
     })
     if (showPresets) PresetDialog(state, vm) { showPresets = false }
+    if (showDiag) DiagDialog(state, vm) { showDiag = false }
+    SniffBeeper(state)
     state.error?.let { msg ->
         AlertDialog(onDismissRequest = vm::dismissError, confirmButton = { TextButton(onClick = vm::dismissError) { Text("확인") } },
             title = { Text("측정 오류") }, text = { Text(msg) })
@@ -131,7 +137,7 @@ fun MainScreen(state: UiState, vm: MeasureViewModel, onSaveCsv: () -> Unit, onSh
 @Composable
 private fun TopBar(
     state: UiState, vm: MeasureViewModel,
-    onSettings: () -> Unit, onPresets: () -> Unit, onSaveCsv: () -> Unit, onShareCsv: () -> Unit,
+    onSettings: () -> Unit, onPresets: () -> Unit, onDiag: () -> Unit, onSaveCsv: () -> Unit, onShareCsv: () -> Unit,
 ) {
     val s = state.settings
     var menu by remember { mutableStateOf(false) }
@@ -160,6 +166,7 @@ private fun TopBar(
                 MenuItem("CSV 파일로 저장", state.last != null, close, onSaveCsv)
                 MenuItem("CSV 공유 (카톡 등)", state.last != null, close, onShareCsv)
                 MenuItem("빠른 설정 저장/불러오기", true, close, onPresets)
+                MenuItem("자가점검 · 속도 진단", true, close, onDiag)
                 MenuItem(if (state.sniff) "근접 탐색 끄기 (이전 설정으로)" else "근접 탐색 (커넥터에 대고 찾기)", true, close, vm::toggleSniff)
                 HorizontalDivider()
                 MenuItem("동글 자체 신호 기록 (안테나 분리 상태)", state.last != null, close, vm::recordInternal)
@@ -242,6 +249,7 @@ private fun InfoLine(state: UiState) {
             "화면 갱신 ${(tm.totalMs.toDouble() / n).f(1)} ms마다 (${n}구간)" } },
         if (s.dcShift) "중심 이동 중" else null,
         if (state.sniff) "근접 탐색" else null,
+        if (state.zoomed) "확대(실시간)" else null,
         state.device,
     )
     Text(parts.joinToString("  ·  "), color = Dim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -253,37 +261,44 @@ private fun InfoLine(state: UiState) {
 @Composable
 private fun ChartBox(state: UiState, vm: MeasureViewModel, modifier: Modifier) {
     val s = state.settings
-    Box(modifier) {
-        SpectrumChart(
-            live = state.live, livePoints = state.livePoints,
-            hold = if (s.maxHold) state.hold else null, baseline = if (s.mode == Mode.REVERSE) state.baseline else null,
-            offsetDb = s.offsetDb, refLevelDb = s.refLevelDb, dbPerDiv = s.dbPerDiv,
-            startHz = s.startMhz * 1e6, stopHz = s.stopMhz * 1e6,
-            channelHz = s.channelHz(),
-            peaks = state.results?.peaks ?: emptyList(),
-            markers = state.markers, selectedMarker = state.selectedMarker,
-            onTap = vm::placeMarker, onDoubleTap = vm::autoScale,
-            onRefDrag = vm::dragRef, onRefDragEnd = vm::commitRef, onPinch = vm::zoomSpan,
-            modifier = Modifier.fillMaxSize(),
-        )
-        val banner = when {
-            state.clipped -> "입력 과다 (클리핑) · Gain을 낮추거나 감쇠기를 쓰세요" to Bad
-            !state.running && state.live == null -> "▶ 측정 시작을 누르세요  ·  메뉴(⋮) → 데모로 미리보기" to Dim
-            state.error == null && state.status.startsWith("USB 재연결") -> state.status to Warn
-            else -> null
+    Column(modifier) {
+        Box(Modifier.fillMaxWidth().weight(if (s.waterfall) 0.6f else 1f)) {
+            SpectrumChart(
+                live = state.live, livePoints = state.livePoints,
+                hold = if (s.maxHold) state.hold else null, baseline = if (s.mode == Mode.REVERSE) state.baseline else null,
+                offsetDb = s.offsetDb, refLevelDb = s.refLevelDb, dbPerDiv = s.dbPerDiv,
+                startHz = s.startMhz * 1e6, stopHz = s.stopMhz * 1e6,
+                channelHz = s.channelHz(),
+                peaks = state.results?.peaks ?: emptyList(),
+                markers = state.markers, selectedMarker = state.selectedMarker,
+                onTap = vm::placeMarker, onLongPress = vm::zoomAt, onDoubleTap = vm::autoScale,
+                onRefDrag = vm::dragRef, onRefDragEnd = vm::commitRef, onPinch = vm::zoomSpan,
+                modifier = Modifier.fillMaxSize(),
+            )
+            val banner = when {
+                state.clipped -> "입력 과다 (클리핑) · Gain을 낮추거나 감쇠기를 쓰세요" to Bad
+                !state.running && state.live == null -> "▶ 측정 시작을 누르세요  ·  메뉴(⋮) → 데모로 미리보기" to Dim
+                state.error == null && state.status.startsWith("USB 재연결") -> state.status to Warn
+                else -> null
+            }
+            state.markers.firstOrNull { it.index == state.selectedMarker }?.freqHz?.let { f ->
+                val v = state.shown?.let { Analysis.levelAt(it, f, s.offsetDb) }
+                Text("M${state.selectedMarker}  ${(f / 1e6).f(4)} MHz  ${v?.f(1) ?: "—"} dB",
+                    color = ChartColors.marker, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.align(Alignment.TopStart).padding(start = 56.dp, top = 6.dp)
+                        .background(Color(0xCC0B0D12), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 3.dp))
+            }
+            if (state.sniff) SniffReadout(state, vm, Modifier.align(Alignment.BottomCenter).padding(bottom = 34.dp))
+            banner?.let { (text, color) ->
+                Text(text, color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 40.dp)
+                        .background(Color(0xCC0B0D12), RoundedCornerShape(6.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
+            }
         }
-        state.markers.firstOrNull { it.index == state.selectedMarker }?.freqHz?.let { f ->
-            val v = state.shown?.let { Analysis.levelAt(it, f, s.offsetDb) }
-            Text("M${state.selectedMarker}  ${(f / 1e6).f(4)} MHz  ${v?.f(1) ?: "—"} dB",
-                color = ChartColors.marker, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace,
-                modifier = Modifier.align(Alignment.TopStart).padding(start = 56.dp, top = 6.dp)
-                    .background(Color(0xCC0B0D12), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 3.dp))
-        }
-        if (state.sniff) SniffReadout(state, vm, Modifier.align(Alignment.BottomCenter).padding(bottom = 34.dp))
-        banner?.let { (text, color) ->
-            Text(text, color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 40.dp)
-                    .background(Color(0xCC0B0D12), RoundedCornerShape(6.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
+        if (s.waterfall) {
+            Spacer(Modifier.height(2.dp))
+            WaterfallView(vm.waterfall, state.waterfallVersion, s.refLevelDb - 10 * s.dbPerDiv - s.offsetDb, s.refLevelDb - s.offsetDb,
+                Modifier.fillMaxWidth().weight(0.4f))
         }
     }
 }
@@ -315,6 +330,32 @@ private fun SniffReadout(state: UiState, vm: MeasureViewModel, modifier: Modifie
             Text(if (state.clipped) "입력 과다 · Gain 낮추기" else "시작 대비", color = if (state.clipped) Bad else Dim, fontSize = 12.sp)
         }
         Pill("다시 기준", enabled = now != null, onClick = vm::resetSniffRef)
+        Pill(if (state.sniffSound) "소리 켬" else "소리 끔", onClick = vm::toggleSniffSound)
+    }
+}
+
+/**
+ * Sniffing beep: faster as the level rises above the starting level (about 1/s
+ * at the start, 16/s at +20 dB). Stops when sniffing, sound or measuring stops.
+ */
+@Composable
+private fun SniffBeeper(state: UiState) {
+    val now = state.peakNow?.first
+    val ref = state.sniffRefDb
+    val rise by rememberUpdatedState(if (now != null && ref != null) now - ref else null)
+    if (!(state.sniff && state.sniffSound && state.running)) return
+    LaunchedEffect(Unit) {
+        val tone = runCatching { android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 80) }.getOrNull()
+            ?: return@LaunchedEffect
+        try {
+            while (true) {
+                val r = rise
+                if (r != null) tone.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 35)
+                delay(if (r == null) 500L else (1000 * kotlin.math.exp(-0.14 * r.coerceAtLeast(0.0))).toLong().coerceIn(60L, 1000L))
+            }
+        } finally {
+            tone.release()
+        }
     }
 }
 
@@ -326,6 +367,7 @@ private fun BottomBar(state: UiState, vm: MeasureViewModel, showPanel: Boolean, 
     Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (state.zoomed) Pill("◀ 전체로", fill = Accent, bold = true, onClick = vm::unzoom)
             Segmented(state.markers.map { "M${it.index}" + if (it.freqHz != null) "•" else "" }, state.selectedMarker - 1) {
                 vm.selectMarker(it + 1)
             }
@@ -335,6 +377,7 @@ private fun BottomBar(state: UiState, vm: MeasureViewModel, showPanel: Boolean, 
             Toggle("Max Hold", s.maxHold, vm::toggleHold)
             Pill("초기화", enabled = s.maxHold, onClick = vm::resetHold)
             Toggle("Ch Power", s.channelPower, vm::toggleChannelPower)
+            Toggle("워터폴", s.waterfall, vm::toggleWaterfall)
         }
         Spacer(Modifier.width(6.dp))
         Pill(if (showPanel) "결과 ▸" else "◂ 결과", onClick = onTogglePanel)
@@ -499,6 +542,66 @@ private fun PresetDialog(state: UiState, vm: MeasureViewModel, onDismiss: () -> 
                 }
                 Text("상단 모드·대역 버튼은 기본 시작값을 적용합니다. 현장에 맞춘 값은 여기서 저장해 두세요.", fontSize = 11.sp, color = Dim)
                 message?.let { Text(it, color = Good, fontSize = 12.sp) }
+            }
+        },
+    )
+}
+
+// ---- diagnostics ------------------------------------------------------------------
+
+@Composable
+private fun DiagDialog(state: UiState, vm: MeasureViewModel, onDismiss: () -> Unit) {
+    val d = state.diag
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
+        title = { Text("자가점검 · 속도 진단") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (state.demo) Text("데모(시뮬레이터) 결과입니다 · 실제 동글 값이 아님", color = Warn, fontSize = 12.sp)
+                Text("마지막 스윕 시간 분석", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                val t = state.timing; val plan = state.last?.plan
+                if (t == null || plan == null) Text("측정한 스윕이 아직 없습니다", color = Dim, fontSize = 12.sp)
+                else {
+                    val s = state.settings
+                    val r = com.lteduenv.rxcheck.core.diag.SpeedReport.of(t, plan, s.effectiveAverages(), 2048)
+                    Text("구간 ${r.segments}개 · SPAN 완료 ${r.totalMs} ms", fontSize = 13.sp)
+                    Text("구간당  튜닝 ${r.tuneMsPerSeg.f(1)} ms" + (r.controlPerSeg?.let { " (USB 제어 ${it.f(1)}회, ${r.controlMsPerSeg!!.f(1)} ms)" } ?: ""),
+                        fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                    Text("        수집 ${r.captureMsPerSeg.f(1)} ms (샘플 자체 ${r.dataMsPerSeg.f(2)} ms" +
+                        (r.bulkMsPerSeg?.let { ", USB 수신 ${it.f(1)} ms" } ?: "") + ")", fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                    Text("        계산 ${r.dspMsPerSeg.f(1)} ms · 기타 ${r.otherMsPerSeg.f(1)} ms", fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                    Text("샘플 자체 시간과 수집 시간의 차이가 USB 대기입니다. 튜닝 시간은 대부분 USB 제어 왕복입니다.", color = Dim, fontSize = 11.sp)
+                }
+                HorizontalDivider()
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(onClick = vm::requestSelfTest, enabled = d.busy == null) { Text("자가점검") }
+                    OutlinedButton(onClick = vm::requestSettleProbe, enabled = d.busy == null) { Text("전환 안정 시간 측정") }
+                }
+                d.busy?.let { Text(it, color = Accent, fontSize = 12.sp) }
+                d.error?.let { Text(it, color = Bad, fontSize = 12.sp) }
+                d.checks?.let { checks ->
+                    Text("자가점검" + if (d.demo) " (데모)" else "", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    for (c in checks) {
+                        val (mark, color) = when (c.ok) { true -> "✓" to Good; false -> "⚠" to Warn; null -> "·" to Dim }
+                        Text("$mark ${c.name}: ${c.value}", color = color, fontSize = 12.sp)
+                        if (c.note.isNotEmpty()) Text("   ${c.note}", color = Dim, fontSize = 11.sp)
+                    }
+                    Text("안테나·입력 상태에 따라 값이 달라집니다. 기준은 대략적인 이상 여부만 봅니다.", color = Dim, fontSize = 11.sp)
+                }
+                d.settle?.let { r ->
+                    Text("전환 안정 시간" + if (d.demo) " (데모)" else "", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("전환 ${r.transitions}회 · 안정까지 최대 ${r.maxSettle} 샘플 (${(r.maxSettle / 2.4e3).f(2)} ms)", fontSize = 12.sp)
+                    Text("레벨 차이 6 dB 이상 전환 ${r.informative}회" +
+                        (r.maxInformativeSettle?.let { " · 그중 최대 $it 샘플" } ?: ""), fontSize = 12.sp)
+                    Text("현재 버리는 샘플: ${r.currentDiscard}", fontSize = 12.sp)
+                    val over = r.maxSettle > r.currentDiscard
+                    Text(if (over) "⚠ 측정된 안정 시간이 현재 버림보다 깁니다 · 구간 경계 레벨을 확인하세요"
+                        else "측정된 안정 시간이 현재 버림 안에 있습니다 (설정은 바꾸지 않음)",
+                        color = if (over) Warn else Good, fontSize = 12.sp)
+                    Text("전환마다 Gain을 2↔14로 바꿔 이전 샘플을 레벨로 구분합니다. 여러 번 측정해 같은 결과가 나올 때만 근거로 쓰세요.",
+                        color = Dim, fontSize = 11.sp)
+                }
             }
         },
     )

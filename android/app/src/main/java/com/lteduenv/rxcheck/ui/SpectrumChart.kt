@@ -42,14 +42,16 @@ object ChartColors {
     val unmeasured = Color(0xFFFFB020)
 }
 
-private const val LEFT = 48f
+internal const val LEFT = 48f
 private const val TOP = 8f
 private const val BOTTOM = 30f
-private const val RIGHT = 8f
+internal const val RIGHT = 8f
+private const val LONG_PRESS_MS = 450L
 
 /**
  * Spectrum display, Y from refLevel down 10 divisions; drawn levels are dBFS + offset.
- * Gestures: tap places the selected marker, double tap fits Ref/scale to the trace,
+ * Gestures: tap places the selected marker, long press zooms there (real-time),
+ * double tap fits Ref/scale to the trace,
  * one-finger vertical drag moves Ref, two-finger pinch changes Span (applied on
  * release, centre fixed).
  */
@@ -69,6 +71,7 @@ fun SpectrumChart(
     markers: List<Marker>,
     selectedMarker: Int,
     onTap: (Double) -> Unit,
+    onLongPress: (Double) -> Unit,
     onDoubleTap: () -> Unit,
     onRefDrag: (Double) -> Unit,
     onRefDragEnd: () -> Unit,
@@ -79,6 +82,7 @@ fun SpectrumChart(
     val f0 = plan?.startHz ?: startHz
     val f1 = plan?.stopHz ?: stopHz
     val tap by rememberUpdatedState(onTap)
+    val longPress by rememberUpdatedState(onLongPress)
     val doubleTap by rememberUpdatedState(onDoubleTap)
     val lastTap = remember { longArrayOf(0L) }
     val drag by rememberUpdatedState(onRefDrag)
@@ -92,8 +96,10 @@ fun SpectrumChart(
             val down = awaitFirstDown(requireUnconsumed = false)
             var dragged = false; var pinched = false
             var zoom = 1f; var dy = 0f
+            var upTime = down.uptimeMillis
             do {
                 val event = awaitPointerEvent()
+                event.changes.firstOrNull()?.let { upTime = it.uptimeMillis }
                 val fingers = event.changes.count { it.pressed }
                 if (fingers >= 2) {
                     pinched = true
@@ -114,6 +120,13 @@ fun SpectrumChart(
             when {
                 pinched -> if (abs(zoom - 1f) > 0.05f) pinch(zoom)
                 dragged -> dragEnd()
+                upTime - down.uptimeMillis >= LONG_PRESS_MS -> {
+                    lastTap[0] = 0L
+                    val w = (size.width - LEFT - RIGHT).coerceAtLeast(1f)
+                    val frac = ((down.position.x - LEFT) / w).coerceIn(0f, 1f)
+                    val (a, b) = range
+                    if (b > a) longPress(a + frac * (b - a))
+                }
                 else -> {
                     val now = System.currentTimeMillis()
                     if (now - lastTap[0] < 350) { lastTap[0] = 0L; doubleTap(); return@awaitEachGesture }
