@@ -145,6 +145,27 @@ RTLSDR_API int rtlsdr_read_eeprom(rtlsdr_dev_t *dev, uint8_t *data,
 RTLSDR_API int rtlsdr_set_center_freq(rtlsdr_dev_t *dev, uint32_t freq);
 
 /*!
+ * Open or close the I2C repeater gate to the tuner. Exposed so a caller
+ * doing many retunes in a row (e.g. a sweep) can hold it open across them
+ * instead of paying a USB control-transfer round trip per tune to toggle it.
+ *
+ * \param dev the device handle given by rtlsdr_open()
+ * \param on 1 to open the repeater, 0 to close it
+ */
+RTLSDR_API void rtlsdr_set_i2c_repeater(rtlsdr_dev_t *dev, int on);
+
+/*!
+ * Same as rtlsdr_set_center_freq(), but never toggles the I2C repeater
+ * itself. Caller must have already opened it with rtlsdr_set_i2c_repeater()
+ * and must close it when done retuning.
+ *
+ * \param dev the device handle given by rtlsdr_open()
+ * \param freq frequency in Hz
+ * \return 0 on success
+ */
+RTLSDR_API int rtlsdr_set_center_freq_no_repeater_toggle(rtlsdr_dev_t *dev, uint32_t freq);
+
+/*!
  * Get actual frequency the device is tuned to.
  *
  * \param dev the device handle given by rtlsdr_open()

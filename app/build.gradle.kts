@@ -14,8 +14,8 @@ android {
         minSdk = 26
         targetSdk = 34
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
-        versionCode = 23
-        versionName = "2.6.5-tune"
+        versionCode = 24
+        versionName = "2.6.6-repeater"
     }
 
     buildTypes {

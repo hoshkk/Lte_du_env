@@ -34,6 +34,10 @@ JNIEXPORT jlong JNICALL Java_com_lteduenv_spectrum_data_sdr_NativeRtl_open(JNIEn
     rtlsdr_set_tuner_gain_mode(d,agc?0:1)<0 || (!agc && rtlsdr_set_tuner_gain(d,gain)<0)){
    rtlsdr_close(d);fail(e,"USB 수신 설정 실패");return 0;
  }
+ /* Hold the I2C repeater open for the life of the session instead of
+  * toggling it around every single retune (NativeRtl_tune uses the
+  * no-toggle variant). rtlsdr_close() closes it again on teardown. */
+ rtlsdr_set_i2c_repeater(d,1);
  return (jlong)(intptr_t)d;
 }
 extern void spectrum_profile_begin(void);
@@ -45,7 +49,7 @@ JNIEXPORT jlongArray JNICALL Java_com_lteduenv_spectrum_data_sdr_NativeRtl_tune(
  if(!d || settle<0 || settle>1000){fail(e,"잘못된 USB 주파수 설정");return NULL;}
  jlong t0=clock_ns();
  spectrum_profile_begin();
- int tune_rc=rtlsdr_set_center_freq(d,(uint32_t)hz);
+ int tune_rc=rtlsdr_set_center_freq_no_repeater_toggle(d,(uint32_t)hz);
  int64_t stats[8]; spectrum_profile_end(stats);
  if(tune_rc<0){fail(e,"주파수 동조 실패 / PLL 잠금 확인 실패");return NULL;}
  jlong t1=clock_ns();

@@ -949,6 +949,27 @@ int rtlsdr_set_center_freq(rtlsdr_dev_t *dev, uint32_t freq)
 	return r;
 }
 
+int rtlsdr_set_center_freq_no_repeater_toggle(rtlsdr_dev_t *dev, uint32_t freq)
+{
+	int r = -1;
+
+	if (!dev || !dev->tuner)
+		return -1;
+
+	if (dev->direct_sampling) {
+		r = rtlsdr_set_if_freq(dev, freq);
+	} else if (dev->tuner && dev->tuner->set_freq) {
+		r = dev->tuner->set_freq(dev, freq - dev->offs_freq);
+	}
+
+	if (!r)
+		dev->freq = freq;
+	else
+		dev->freq = 0;
+
+	return r;
+}
+
 uint32_t rtlsdr_get_center_freq(rtlsdr_dev_t *dev)
 {
 	if (!dev)
