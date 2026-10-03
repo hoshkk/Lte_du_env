@@ -20,6 +20,9 @@ import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+/** No RTL2832U on the bus (unplugged, or the OTG contact dropped). */
+class DongleMissing(message: String) : java.io.IOException(message)
+
 /** The user refused (or did not answer) the USB permission prompt; never retried. */
 class UsbPermissionDenied(message: String) : java.io.IOException(message)
 
@@ -65,6 +68,9 @@ object UsbAccess {
     private const val VID = 0x0bda
     private val PIDS = setOf(0x2832, 0x2838)
 
+    fun isAttached(context: Context): Boolean =
+        findDongle(context.getSystemService(Context.USB_SERVICE) as UsbManager) != null
+
     fun findDongle(manager: UsbManager): UsbDevice? =
         manager.deviceList.values.firstOrNull { it.vendorId == VID && it.productId in PIDS }
 
@@ -72,7 +78,7 @@ object UsbAccess {
     suspend fun open(context: Context): AndroidUsbIo {
         val manager = context.getSystemService(Context.USB_SERVICE) as UsbManager
         val device = findDongle(manager)
-            ?: throw UsbIoException("RTL-SDR 동글이 없습니다. OTG 연결을 확인하세요")
+            ?: throw DongleMissing("RTL-SDR 동글이 없습니다. OTG 연결을 확인하세요")
         if (!manager.hasPermission(device)) requestPermission(context, manager, device)
         val conn = manager.openDevice(device) ?: throw UsbIoException("USB 장치를 열지 못했습니다")
         return AndroidUsbIo(device, conn)

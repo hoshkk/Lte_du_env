@@ -278,7 +278,7 @@ private fun ChartBox(state: UiState, vm: MeasureViewModel, modifier: Modifier) {
             val banner = when {
                 state.clipped -> "입력 과다 (클리핑) · Gain을 낮추거나 감쇠기를 쓰세요" to Bad
                 !state.running && state.live == null -> "▶ 측정 시작을 누르세요  ·  메뉴(⋮) → 데모로 미리보기" to Dim
-                state.error == null && state.status.startsWith("USB 재연결") -> state.status to Warn
+                state.error == null && state.running && state.status.startsWith("USB") -> state.status to Warn
                 else -> null
             }
             state.markers.firstOrNull { it.index == state.selectedMarker }?.freqHz?.let { f ->

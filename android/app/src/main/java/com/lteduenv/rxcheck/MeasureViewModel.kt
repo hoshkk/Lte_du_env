@@ -23,6 +23,7 @@ import com.lteduenv.rxcheck.core.sweep.SweepTiming
 import com.lteduenv.rxcheck.core.sweep.Trace
 import com.lteduenv.rxcheck.core.usb.UsbIoException
 import com.lteduenv.rxcheck.data.Store
+import com.lteduenv.rxcheck.usb.DongleMissing
 import com.lteduenv.rxcheck.usb.UsbAccess
 import com.lteduenv.rxcheck.usb.UsbPermissionDenied
 import kotlinx.coroutines.CancellationException
@@ -142,6 +143,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(running = true, demo = demo, error = null, status = "연결 중…") }
         job = viewModelScope.launch(measureDispatcher) {
             var attempt = 0
+            var connectedOnce = false
             try {
                 while (currentCoroutineContext().isActive) {
                     var usb: AutoCloseable? = null
@@ -153,6 +155,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
                             usb = io
                             RtlSdr.open(io, fastTune = s0.fastTune, gainStep = s0.gainStep, narrowIf = s0.narrowIf)
                         }
+                        connectedOnce = true
                         rx = r
                         _state.update { it.copy(device = r.description, status = "측정 중") }
                         val outcome = loop(r) { attempt = 0 }
@@ -162,12 +165,23 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
                         throw e
                     } catch (e: UsbPermissionDenied) {
                         throw e
+                    } catch (e: DongleMissing) {
+                        // Unplugged or the OTG contact dropped mid-run: wait (as long as the user
+                        // keeps measuring) and carry on when it is back. The aborted sweep is
+                        // discarded; the screen keeps the last completed one.
+                        if (!connectedOnce) throw e
+                        _state.update { it.copy(status = "USB 끊김 · 동글이 다시 잡히면 자동으로 이어서 측정합니다") }
+                        val app = getApplication<Application>()
+                        while (!UsbAccess.isAttached(app)) delay(300)
+                        _state.update { it.copy(status = "USB 재연결 중 · 동글 다시 잡힘 (권한 창이 뜨면 허용)") }
+                        delay(500) // let the device finish enumerating
+                        attempt = 0
                     } catch (e: IOException) {
-                        // A dongle that drops off the bus briefly: reopen a bounded number of times.
+                        // A transfer error (often the dongle dropping off): reopen a bounded number of times.
                         attempt++
                         if (attempt > MAX_RECONNECTS) throw e
                         _state.update { it.copy(status = "USB 재연결 중 ($attempt/$MAX_RECONNECTS) · ${e.message}") }
-                        delay(1000)
+                        delay(300)
                     } finally {
                         runCatching { rx?.close() }
                         runCatching { usb?.close() }
