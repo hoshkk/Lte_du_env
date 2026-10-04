@@ -28,3 +28,39 @@ object AutoFit {
     const val MAX_GAIN_REDUCTIONS = 3
     const val SWEEPS_PER_PASS = 2
 }
+
+/**
+ * "자동 맞춤" gain search: every gain step is measured on the real input, then
+ *  - only steps with no ADC clipping and at least [MIN_HEADROOM_DB] of headroom
+ *    below full scale are allowed (linearity first);
+ *  - among those, the lowest step whose noise floor is [FLOOR_RISE_DB] above the
+ *    floor at the lowest gain is taken: from there the front end's noise, not the
+ *    ADC's, sets the floor, so more gain adds little sensitivity and only costs
+ *    headroom. If no step gets there, the highest allowed step is taken.
+ */
+object GainLadder {
+    const val MIN_HEADROOM_DB = 6.0
+    const val FLOOR_RISE_DB = 10.0
+    const val MAX_CLIP = 1e-5
+
+    data class Step(val gain: Int, val clippedFraction: Double, val peakAdc: Double, val floorDb: Double) {
+        val headroomDb get() = -20 * kotlin.math.log10(peakAdc.coerceIn(1e-6, 1.0))
+        val allowed get() = clippedFraction <= MAX_CLIP && headroomDb >= MIN_HEADROOM_DB
+    }
+
+    data class Choice(val step: Step, val floorRiseDb: Double, val reason: String)
+
+    fun choose(steps: List<Step>): Choice? {
+        if (steps.isEmpty()) return null
+        val base = steps.minBy { it.gain }.floorDb
+        val ok = steps.filter { it.allowed }.sortedBy { it.gain }
+        if (ok.isEmpty()) return null
+        val pick = ok.firstOrNull { it.floorDb - base >= FLOOR_RISE_DB }
+        val s = pick ?: ok.last()
+        val rise = s.floorDb - base
+        val reason = if (pick != null) "잡음 바닥 +%.0f dB에서 충분 · 입력 여유 %.0f dB".format(java.util.Locale.US, rise, s.headroomDb)
+            else "여유를 지키는 최고 Gain · 잡음 바닥 +%.0f dB · 입력 여유 %.0f dB".format(java.util.Locale.US, rise, s.headroomDb)
+        return Choice(s, rise, reason)
+    }
+}
+

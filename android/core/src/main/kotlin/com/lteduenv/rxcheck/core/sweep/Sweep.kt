@@ -125,10 +125,12 @@ class Trace(
     /** Processing applied to these levels (recorded so results can say so). */
     val meanRemoved: Boolean = false,
     val dcPatched: Boolean = false,
+    /** Largest |I| or |Q| seen in the captures (1.0 = ADC full scale); for gain headroom. */
+    val peakAdc: Double = 0.0,
 ) {
     /** Same trace with other levels (and no frame peaks unless given). */
     fun withLevels(levels: FloatArray, peaks: FloatArray? = null, clipped: Double = clippedFraction) =
-        Trace(plan, levels, enbwHz, completedSegments, unlockedSegments, timing, timestampMs, clipped, peaks, meanRemoved, dcPatched)
+        Trace(plan, levels, enbwHz, completedSegments, unlockedSegments, timing, timestampMs, clipped, peaks, meanRemoved, dcPatched, peakAdc)
 
     /** Points with no valid measurement (PLL not locked, not yet swept). */
     val missingPoints get() = levelsDb.count { !it.isFinite() }
@@ -182,6 +184,7 @@ class SweepEngine(private val rx: Receiver) {
         var tuneNs = 0L; var capNs = 0L; var dspNs = 0L
         var unlocked = 0
         var clipped = 0L; var components = 0L
+        var peakAdc = 0.0
         for ((index, seg) in plan.segments.withIndex()) {
             if (!isActive()) return null
             val a = System.nanoTime()
@@ -190,6 +193,7 @@ class SweepEngine(private val rx: Receiver) {
                 else rx.tune(seg.centerHz).also { tunedHz = seg.centerHz; tunedLocked = it }
             val b = System.nanoTime()
             clipped += rx.capture(iq, discardSamples)
+            for (v in iq) { val a = if (v < 0) -v else v; if (a > peakAdc) peakAdc = a.toDouble() }
             components += iq.size
             val c = System.nanoTime()
             ps.compute(iq, out, removeMean, peak)
@@ -210,7 +214,7 @@ class SweepEngine(private val rx: Receiver) {
                     capNs / 1_000_000, dspNs / 1_000_000, rx.takeStats()) else null
                 val trace = Trace(plan, levels.copyOf(), enbwHz, index + 1, unlocked, timing,
                     System.currentTimeMillis(), clipped.toDouble() / components,
-                    if (last) framePeak.copyOf() else null, removeMean, dcPatch)
+                    if (last) framePeak.copyOf() else null, removeMean, dcPatch, peakAdc)
                 onSegment?.invoke(trace)
                 if (last) return trace
             }

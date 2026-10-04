@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.lteduenv.rxcheck.core.analysis.Analysis
 import com.lteduenv.rxcheck.core.analysis.AutoFit
 import com.lteduenv.rxcheck.core.analysis.Evaluate
+import com.lteduenv.rxcheck.core.analysis.GainLadder
 import com.lteduenv.rxcheck.core.analysis.Results
 import com.lteduenv.rxcheck.core.diag.Check
 import com.lteduenv.rxcheck.core.diag.SelfTest
@@ -228,6 +229,11 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
                 applied = null // gain and tuning were touched: re-apply below
                 continue
             }
+            if (autoFitRequested && rx is RtlSdr) {
+                runGainLadder(rx, engine, s, p)
+                applied = null
+                continue
+            }
             if (p != plan || baselineKeyChanged(applied, s)) {
                 if (p != plan) _state.update { it.copy(live = null, last = null, hold = null, results = null) }
                 plan = p
@@ -293,6 +299,43 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
         return LoopEnd.STOPPED
     }
 
+    /**
+     * "자동 맞춤" with a real dongle: one sweep at every gain step 0..15 on the
+     * current span, then [GainLadder.choose] (no clipping, >= 6 dB headroom, the
+     * lowest gain where the front end's noise sets the floor). Ref/scale are then
+     * fitted to the sweep at the chosen gain. Takes about 16 sweeps.
+     */
+    private suspend fun runGainLadder(rx: RtlSdr, engine: SweepEngine, s: Settings, p: SweepPlan) {
+        val ctx = currentCoroutineContext()
+        val steps = ArrayList<GainLadder.Step>()
+        val traces = HashMap<Int, Trace>()
+        try {
+            for (g in 0..Settings.MAX_GAIN_STEP) {
+                if (!ctx.isActive || !autoFitRequested) return
+                _state.update { it.copy(autoFit = "자동 맞춤 중 · Gain $g/${Settings.MAX_GAIN_STEP} 측정") }
+                rx.setGain(g)
+                val t = engine.sweep(p, s.effectiveAverages(rx.sampleRate), s.dcPatch, s.iqMeanRemoval,
+                    isActive = { ctx.isActive }) ?: return
+                val floor = Analysis.medianBinDb(t) ?: continue
+                steps += GainLadder.Step(g, t.clippedFraction, t.peakAdc, floor)
+                traces[g] = t
+            }
+        } finally {
+            rx.setGain(_state.value.settings.gainStep) // back to the setting unless we change it below
+        }
+        val choice = GainLadder.choose(steps)
+        if (choice == null) {
+            finishAutoFit("자동 맞춤 실패 · 모든 Gain에서 입력 과다 · 감쇠기를 사용하세요 (Gain 그대로)")
+            return
+        }
+        val g = choice.step.gain
+        commit(_state.value.settings.copy(gainStep = g), clearTraces = true)
+        traces[g]?.let { t -> AutoFit.decide(listOf(t), g, s.offsetDb) }?.let { d ->
+            commit(_state.value.settings.copy(refLevelDb = d.refLevelDb, dbPerDiv = d.dbPerDiv), clearTraces = false)
+        }
+        finishAutoFit("자동 맞춤 완료 · Gain $g/${Settings.MAX_GAIN_STEP} · ${choice.reason}")
+    }
+
     private fun finishAutoFit(msg: String) {
         autoFitRequested = false
         _state.update { it.copy(autoFit = msg) }
@@ -354,14 +397,17 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
         job?.cancel()
     }
 
-    /** Lowers gain while the ADC clips (never raises it), then fits Ref and dB/div. */
+    /**
+     * Real dongle: measures every gain step and picks the best (see [runGainLadder]).
+     * Demo: only fits Ref and dB/div.
+     */
     fun autoFit() {
         if (!_state.value.running) {
             _state.update { it.copy(autoFit = "측정 중에만 자동 맞춤을 할 수 있습니다") }
             return
         }
         autoFitRequested = true
-        _state.update { it.copy(autoFit = "자동 맞춤 중 · 스윕 ${AutoFit.SWEEPS_PER_PASS}회 관측") }
+        _state.update { it.copy(autoFit = if (it.demo) "자동 맞춤 중 · 스윕 ${AutoFit.SWEEPS_PER_PASS}회 관측" else "자동 맞춤 중 · Gain 0~15 순서대로 측정") }
     }
 
     // ---- settings ------------------------------------------------------------------
