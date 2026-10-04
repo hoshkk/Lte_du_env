@@ -162,11 +162,15 @@ private fun TopBar(
             Pill(" ⋮ ", bold = true) { menu = true }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 val close = { menu = false }
+                val ctx = androidx.compose.ui.platform.LocalContext.current
+                val version = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() }
+                MenuItem("앱 버전 ${version ?: "?"}", false, close) {}
                 if (!state.running) MenuItem("데모 실행 (동글 없이 화면 보기)", true, close) { vm.start(true) }
                 MenuItem("CSV 파일로 저장", state.last != null, close, onSaveCsv)
                 MenuItem("CSV 공유 (카톡 등)", state.last != null, close, onShareCsv)
                 MenuItem("빠른 설정 저장/불러오기", true, close, onPresets)
                 MenuItem("자가점검 · 속도 진단", true, close, onDiag)
+                MenuItem("B8 하향(DL) 954.3 MHz 보기 (기지국 송신 확인)", true, close, vm::showB8Downlink)
                 MenuItem(if (state.sniff) "근접 탐색 끄기 (이전 설정으로)" else "근접 탐색 (커넥터에 대고 찾기)", true, close, vm::toggleSniff)
                 HorizontalDivider()
                 MenuItem("동글 자체 신호 기록 (안테나 분리 상태)", state.last != null, close, vm::recordInternal)

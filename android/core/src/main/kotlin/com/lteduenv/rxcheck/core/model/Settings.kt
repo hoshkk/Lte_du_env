@@ -76,7 +76,9 @@ data class Settings(
 
     fun validate(): String? = when {
         !listOf(centerMhz, spanMhz, channelBwMhz, rbwKhz, offsetDb, thresholdDb, refLevelDb, dbPerDiv).all { it.isFinite() } ->
-            "숫자 입력을 확인하세요"
+            "숫자 입력을 확인하세요: " + listOf("Center" to centerMhz, "Span" to spanMhz, "채널 BW" to channelBwMhz,
+                "RBW" to rbwKhz, "Offset" to offsetDb, "임계" to thresholdDb, "Ref Level" to refLevelDb, "dB/div" to dbPerDiv)
+                .filter { !it.second.isFinite() }.joinToString(", ") { it.first }
         spanMhz !in 0.05..MAX_SPAN_MHZ -> "Span 범위: 0.05–50 MHz"
         startMhz < 24.0 || stopMhz > 1766.0 -> "측정 범위 전체가 24–1766 MHz 안이어야 합니다 (RTL-SDR V4 한계)"
         rbwKhz !in 0.1..300.0 -> "RBW 범위: 0.1–300 kHz"

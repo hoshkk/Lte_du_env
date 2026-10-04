@@ -470,6 +470,17 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
         return if (best < 0) null else t.freqAt(best)
     }
 
+    /**
+     * B8 downlink (RX centre + 45 MHz duplex = 954.3 MHz): the band the site's
+     * antenna actually transmits in, to confirm the dongle sees the site at all.
+     * B3 downlink (about 1.84 GHz) is above the RTL-SDR's 1766 MHz limit.
+     */
+    fun showB8Downlink() {
+        val s = _state.value.settings
+        commit(s.copy(band = null, centerMhz = Band.B8.rxCenterMhz + 45.0, spanMhz = 15.0, channelBwMhz = 10.0,
+            maxHold = true), clearTraces = true)
+    }
+
     fun toggleSniffSound() = _state.update { it.copy(sniffSound = !it.sniffSound) }
 
     /** Settings in use before near-field sniffing started, restored when it ends. */
