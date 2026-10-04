@@ -190,16 +190,19 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
                         val app = getApplication<Application>()
                         while (!UsbAccess.isAttached(app)) delay(300)
                         _state.update { it.copy(status = "USB 재연결 중 · 동글 다시 잡힘 (권한 창이 뜨면 허용)") }
-                        delay(500) // let the device finish enumerating
+                        delay(1000) // let the device finish enumerating and settle
                         attempt = 0
                     } catch (e: IOException) {
                         // A transfer error (often the dongle dropping off): reopen a bounded number of times.
                         attempt++
                         _state.update { it.copy(usb = it.usb.copy(reopens = it.usb.reopens + 1, last = e.message ?: e.toString(),
                             lastTime = System.currentTimeMillis())) }
-                        if (attempt > MAX_RECONNECTS) throw e
-                        _state.update { it.copy(status = "USB 재연결 중 ($attempt/$MAX_RECONNECTS) · ${e.message}") }
-                        delay(300)
+                        // Before the first good connection a persistent error is reported. After it,
+                        // the dongle is usually re-enumerating (it dropped off and came back), so keep
+                        // trying with a growing pause for as long as the user keeps measuring.
+                        if (!connectedOnce && attempt > MAX_RECONNECTS) throw e
+                        _state.update { it.copy(status = "USB 재연결 중 (${attempt}회째) · ${e.message}") }
+                        delay(minOf(2000L, 300L * attempt))
                     } finally {
                         runCatching { rx?.close() }
                         runCatching { usb?.close() }
