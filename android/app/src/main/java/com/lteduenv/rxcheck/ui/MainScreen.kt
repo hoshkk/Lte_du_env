@@ -254,6 +254,7 @@ private fun InfoLine(state: UiState) {
         if (s.dcShift) "중심 이동 중" else null,
         if (state.sniff) "근접 탐색" else null,
         if (state.zoomed) "확대(실시간)" else null,
+        state.usb.let { u -> if (u.dropouts + u.reopens > 0) "USB 끊김 ${u.dropouts + u.reopens}회" else null },
         state.device,
     )
     Text(parts.joinToString("  ·  "), color = Dim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -577,6 +578,16 @@ private fun DiagDialog(state: UiState, vm: MeasureViewModel, onDismiss: () -> Un
                     Text("        계산 ${r.dspMsPerSeg.f(1)} ms · 기타 ${r.otherMsPerSeg.f(1)} ms", fontSize = 12.sp, fontFamily = FontFamily.Monospace)
                     Text("샘플 자체 시간과 수집 시간의 차이가 USB 대기입니다. 튜닝 시간은 대부분 USB 제어 왕복입니다.", color = Dim, fontSize = 11.sp)
                 }
+                HorizontalDivider()
+                val u = state.usb
+                Text("USB 상태 (측정 시작 후)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                val mins = (System.currentTimeMillis() - u.startTime) / 60000.0
+                Text("재시도로 복구 ${u.retries}회 · 장치 다시 열기 ${u.reopens}회 · 동글 사라짐 ${u.dropouts}회 (${mins.f(1)}분 동안)",
+                    fontSize = 12.sp)
+                u.last?.let { Text("마지막: $it" + (u.lastTime?.let { t ->
+                    " (" + java.text.SimpleDateFormat("HH:mm:ss", Locale.KOREA).format(java.util.Date(t)) + ")" } ?: ""),
+                    color = Dim, fontSize = 11.sp) }
+                Text("'동글 사라짐'이 늘면 전원·접점(하드웨어), '다시 열기'만 늘면 USB 통신 오류입니다.", color = Dim, fontSize = 11.sp)
                 HorizontalDivider()
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedButton(onClick = vm::requestSelfTest, enabled = d.busy == null) { Text("자가점검") }

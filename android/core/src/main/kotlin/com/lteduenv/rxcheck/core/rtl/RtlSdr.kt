@@ -52,7 +52,20 @@ class RtlSdr private constructor(
         return tuner.pllLocked
     }
 
-    override fun capture(out: FloatArray, discardSamples: Int): Int {
+    /**
+     * A failed bulk read leaves a gap in the sample stream, so the whole capture
+     * starts over (FIFO reset, discard, read) instead of stitching around it;
+     * only a second failure in a row is an error.
+     */
+    override fun capture(out: FloatArray, discardSamples: Int): Int = try {
+        captureOnce(out, discardSamples)
+    } catch (e: UsbIoException) {
+        com.stats.retries++
+        com.stats.lastRetryError = "샘플 수신 실패 후 수집 다시 시작 (${e.message})"
+        captureOnce(out, discardSamples)
+    }
+
+    private fun captureOnce(out: FloatArray, discardSamples: Int): Int {
         com.resetFifo()
         // Transition samples and the capture come in the same bulk reads; the
         // first [skip] bytes are dropped exactly as a separate discard read would.

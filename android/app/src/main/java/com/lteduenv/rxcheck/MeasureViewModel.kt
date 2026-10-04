@@ -43,6 +43,19 @@ import java.util.Locale
 
 data class Marker(val index: Int, val freqHz: Double? = null)
 
+/** USB trouble since measuring started, to tell transient errors from real drop-outs. */
+data class UsbHealth(
+    /** Transfers that failed once and worked on retry (no data lost). */
+    val retries: Int = 0,
+    /** Device reopened after a persistent error, dongle still on the bus. */
+    val reopens: Int = 0,
+    /** Dongle vanished from the bus (unplug, OTG contact, power). */
+    val dropouts: Int = 0,
+    val last: String? = null,
+    val lastTime: Long? = null,
+    val startTime: Long = System.currentTimeMillis(),
+)
+
 /** Self-test / settle-probe state for the diagnostics dialog. */
 data class DiagState(
     val busy: String? = null,
@@ -89,6 +102,7 @@ data class UiState(
     /** Bumped when the waterfall gets a row (the buffer itself is [MeasureViewModel.waterfall]). */
     val waterfallVersion: Int = 0,
     val diag: DiagState = DiagState(),
+    val usb: UsbHealth = UsbHealth(),
 ) {
     /** Highest finite level of the last completed sweep and its frequency (dB incl. offset). */
     val peakNow: Pair<Double, Double>? get() {
@@ -141,7 +155,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
 
     fun start(demo: Boolean) {
         if (job?.isActive == true) return
-        _state.update { it.copy(running = true, demo = demo, error = null, status = "연결 중…") }
+        _state.update { it.copy(running = true, demo = demo, error = null, status = "연결 중…", usb = UsbHealth()) }
         job = viewModelScope.launch(measureDispatcher) {
             var attempt = 0
             var connectedOnce = false
@@ -171,7 +185,8 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
                         // keeps measuring) and carry on when it is back. The aborted sweep is
                         // discarded; the screen keeps the last completed one.
                         if (!connectedOnce) throw e
-                        _state.update { it.copy(status = "USB 끊김 · 동글이 다시 잡히면 자동으로 이어서 측정합니다") }
+                        _state.update { it.copy(status = "USB 끊김 · 동글이 다시 잡히면 자동으로 이어서 측정합니다",
+                            usb = it.usb.copy(dropouts = it.usb.dropouts + 1, last = "동글이 USB에서 사라짐", lastTime = System.currentTimeMillis())) }
                         val app = getApplication<Application>()
                         while (!UsbAccess.isAttached(app)) delay(300)
                         _state.update { it.copy(status = "USB 재연결 중 · 동글 다시 잡힘 (권한 창이 뜨면 허용)") }
@@ -180,6 +195,8 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
                     } catch (e: IOException) {
                         // A transfer error (often the dongle dropping off): reopen a bounded number of times.
                         attempt++
+                        _state.update { it.copy(usb = it.usb.copy(reopens = it.usb.reopens + 1, last = e.message ?: e.toString(),
+                            lastTime = System.currentTimeMillis())) }
                         if (attempt > MAX_RECONNECTS) throw e
                         _state.update { it.copy(status = "USB 재연결 중 ($attempt/$MAX_RECONNECTS) · ${e.message}") }
                         delay(300)
@@ -264,7 +281,10 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
             _state.update {
                 val ref = if (it.sniff && it.sniffRefDb == null && !trace.clipped)
                     Analysis.peakFreq(trace)?.let { f -> Analysis.levelAt(trace, f, it.settings.offsetDb) } else it.sniffRefDb
-                it.copy(sniffRefDb = ref, waterfallVersion = it.waterfallVersion + 1, live = trace, livePoints = trace.points, last = trace, hold = hold,
+                val u = trace.timing?.usb
+                val health = if (u == null || u.retries == 0) it.usb else it.usb.copy(retries = it.usb.retries + u.retries,
+                    last = u.lastRetryError ?: it.usb.last, lastTime = System.currentTimeMillis())
+                it.copy(sniffRefDb = ref, waterfallVersion = it.waterfallVersion + 1, usb = health, live = trace, livePoints = trace.points, last = trace, hold = hold,
                     results = results, timing = trace.timing, sweeps = it.sweeps + 1, clipped = trace.clipped,
                     status = when {
                         trace.clipped -> "입력 클리핑 감지 · 이득을 낮추거나 감쇠기를 사용하세요"

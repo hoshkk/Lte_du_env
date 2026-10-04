@@ -60,7 +60,7 @@ class AndroidUsbIo(private val device: UsbDevice, private val conn: UsbDeviceCon
     companion object {
         private const val VENDOR_OUT = 0x40
         private const val VENDOR_IN = 0xc0
-        private const val TIMEOUT_MS = 300
+        private const val TIMEOUT_MS = 1000
     }
 }
 

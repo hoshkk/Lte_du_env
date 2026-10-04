@@ -10,14 +10,17 @@ class UsbStats {
     var controlNanos = 0L
     var bulkBytes = 0L
     var bulkNanos = 0L
+    /** Transfers that failed once and succeeded on a retry (transient bus errors). */
+    var retries = 0
+    var lastRetryError: String? = null
 
     fun reset() {
-        controlOut = 0; controlIn = 0; controlNanos = 0; bulkBytes = 0; bulkNanos = 0
+        controlOut = 0; controlIn = 0; controlNanos = 0; bulkBytes = 0; bulkNanos = 0; retries = 0; lastRetryError = null
     }
 
     fun snapshot() = UsbStats().also {
         it.controlOut = controlOut; it.controlIn = controlIn; it.controlNanos = controlNanos
-        it.bulkBytes = bulkBytes; it.bulkNanos = bulkNanos
+        it.bulkBytes = bulkBytes; it.bulkNanos = bulkNanos; it.retries = retries; it.lastRetryError = lastRetryError
     }
 }
 
@@ -48,25 +51,42 @@ class RtlCom(private val io: UsbIo, private val clock: () -> Long = System::nano
     val manufacturer: String? get() = io.manufacturer
     val product: String? get() = io.product
 
+    /**
+     * A control transfer that fails is repeated up to [RETRIES] times, a few ms
+     * apart: phones' host controllers drop the odd transfer, and every one is a
+     * plain register write/read that can be repeated with the same effect.
+     * Only a persistent failure is an error (and then the device is reopened).
+     */
     fun write(value: Int, index: Int, data: ByteArray) {
-        val t = clock()
-        val rc = io.controlOut(value, index, data, data.size)
-        stats.controlNanos += clock() - t
-        stats.controlOut++
-        if (rc != data.size) throw UsbIoException(
-            "USB 제어 쓰기 실패 (value=0x%04x index=0x%04x rc=%d)".format(value, index, rc))
+        var rc = 0
+        for (attempt in 0..RETRIES) {
+            val t = clock()
+            rc = io.controlOut(value, index, data, data.size)
+            stats.controlNanos += clock() - t
+            stats.controlOut++
+            if (rc == data.size) { if (attempt > 0) noteRetry("쓰기 rc 실패 후 재시도 성공"); return }
+            if (attempt < RETRIES) pause(attempt)
+        }
+        throw UsbIoException("USB 제어 쓰기 실패 (value=0x%04x index=0x%04x rc=%d)".format(value, index, rc))
     }
 
     fun read(value: Int, index: Int, length: Int): ByteArray {
         val buf = ByteArray(length)
-        val t = clock()
-        val rc = io.controlIn(value, index, buf, length)
-        stats.controlNanos += clock() - t
-        stats.controlIn++
-        if (rc != length) throw UsbIoException(
-            "USB 제어 읽기 실패 (value=0x%04x index=0x%04x rc=%d)".format(value, index, rc))
-        return buf
+        var rc = 0
+        for (attempt in 0..RETRIES) {
+            val t = clock()
+            rc = io.controlIn(value, index, buf, length)
+            stats.controlNanos += clock() - t
+            stats.controlIn++
+            if (rc == length) { if (attempt > 0) noteRetry("읽기 rc 실패 후 재시도 성공"); return buf }
+            if (attempt < RETRIES) pause(attempt)
+        }
+        throw UsbIoException("USB 제어 읽기 실패 (value=0x%04x index=0x%04x rc=%d)".format(value, index, rc))
     }
+
+    private fun noteRetry(what: String) { stats.retries++; stats.lastRetryError = what }
+
+    private fun pause(attempt: Int) = runCatching { Thread.sleep(2L shl attempt) }
 
     fun setUsbReg(addr: Int, value: Int, len: Int) = write(addr, BLOCK_USB shl 8 or WRITE, be(value, len))
 
@@ -116,7 +136,7 @@ class RtlCom(private val io: UsbIo, private val clock: () -> Long = System::nano
         setUsbReg(USB_EPA_CTL, 0x0000, 2)
     }
 
-    fun bulkRead(buffer: ByteArray, length: Int, timeoutMs: Int = 500): Int {
+    fun bulkRead(buffer: ByteArray, length: Int, timeoutMs: Int = 1000): Int {
         val t = clock()
         val n = io.bulkIn(buffer, length, timeoutMs)
         stats.bulkNanos += clock() - t
@@ -126,6 +146,8 @@ class RtlCom(private val io: UsbIo, private val clock: () -> Long = System::nano
     }
 
     companion object {
+        /** Extra attempts for a failed control transfer (2, 4 ms apart). */
+        const val RETRIES = 2
         const val WRITE = 0x10
         const val BLOCK_USB = 1
         const val BLOCK_SYS = 2

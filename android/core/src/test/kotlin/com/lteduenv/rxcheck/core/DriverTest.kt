@@ -205,4 +205,43 @@ class DriverTest {
         }
         assertFalse(c.tuner.pointerlessReads)
     }
+
+    /** Fails every [every]-th control transfer once and every [bulkEvery]-th bulk read once. */
+    private class FlakyUsb(val inner: FakeRtlUsb, val every: Int = 13, val bulkEvery: Int = 5) :
+        com.lteduenv.rxcheck.core.usb.UsbIo by inner {
+        var n = 0; var b = 0
+        override fun controlOut(value: Int, index: Int, data: ByteArray, length: Int): Int =
+            if (++n % every == 0) -1 else inner.controlOut(value, index, data, length)
+        override fun controlIn(value: Int, index: Int, buffer: ByteArray, length: Int): Int =
+            if (++n % every == 0) -1 else inner.controlIn(value, index, buffer, length)
+        override fun bulkIn(buffer: ByteArray, length: Int, timeoutMs: Int): Int =
+            if (++b % bulkEvery == 0) -1 else inner.bulkIn(buffer, length, timeoutMs)
+    }
+
+    /** Occasional dropped transfers are retried: same registers, clean samples, sweep completes. */
+    @Test fun transientUsbErrorsAreRetried() {
+        val flakyUsb = FakeRtlUsb(staleBytesAfterReset = 4096); val refUsb = FakeRtlUsb()
+        val flaky = RtlSdr.open(FlakyUsb(flakyUsb), fastTune = true)
+        val ref = RtlSdr.open(refUsb, fastTune = false)
+        for (f in sweepFreqs) {
+            assertTrue(flaky.tune(f)); assertTrue(ref.tune(f))
+            assertArrayEquals(refUsb.tunerRegs, flakyUsb.tunerRegs)
+            val iq = FloatArray(2 * 4096)
+            flaky.capture(iq, 2048)
+            assertTrue(iq.all { abs(it - (127 - 127.4f) / 128f) < 1e-6 }) // no stale bytes after a restarted capture
+        }
+        assertTrue(flaky.takeStats().retries > 0)
+    }
+
+    /** A dongle that stays silent is still an error (and the app reopens it). */
+    @Test fun persistentUsbErrorStillFails() {
+        val usb = FakeRtlUsb()
+        val sdr = RtlSdr.open(usb)
+        val dead = object : com.lteduenv.rxcheck.core.usb.UsbIo by usb {
+            override fun controlOut(value: Int, index: Int, data: ByteArray, length: Int) = -1
+        }
+        val failed = runCatching { RtlSdr.open(dead) }.exceptionOrNull()
+        assertTrue(failed is com.lteduenv.rxcheck.core.usb.UsbIoException)
+        assertTrue(sdr.tune(909_300_000L))
+    }
 }
