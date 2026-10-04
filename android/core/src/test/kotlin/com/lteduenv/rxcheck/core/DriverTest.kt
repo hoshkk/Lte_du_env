@@ -244,4 +244,19 @@ class DriverTest {
         assertTrue(failed is com.lteduenv.rxcheck.core.usb.UsbIoException)
         assertTrue(sdr.tune(909_300_000L))
     }
+
+    /** A Blog V4 (by USB strings) whose 0x34 also seems to answer still gets the R828D and V4 input switching. */
+    @Test fun blogV4PrefersR828DEvenIfR820TAddressAnswers() {
+        val sdr = RtlSdr.open(FakeRtlUsb(ghostAddr = 0x34))
+        assertEquals(R82xx.Chip.R828D, sdr.tuner.chip)
+        assertTrue(sdr.tuner.isBlogV4)
+        assertTrue(sdr.probeInfo, sdr.probeInfo.contains("0x34(R820T): 0x69") && sdr.probeInfo.contains("0x74(R828D): 0x69"))
+        // A genuine V4 without the ghost: the probe shows 0x34 silent.
+        val v4 = RtlSdr.open(FakeRtlUsb())
+        assertTrue(v4.probeInfo, v4.probeInfo.contains("0x34(R820T): 응답 없음"))
+        assertTrue(v4.details.any { it.first == "Blog V4 처리" && it.second.startsWith("켜짐") })
+        // Not a V4 by strings: librtlsdr order (R820T first).
+        val other = RtlSdr.open(FakeRtlUsb(manufacturer = "Realtek", product = "RTL2838UHIDIR", ghostAddr = 0x34))
+        assertEquals(R82xx.Chip.R820T, other.tuner.chip)
+    }
 }

@@ -21,6 +21,8 @@ class FakeRtlUsb(
      * (i.e. from the previous frequency). They come first and read [STALE].
      */
     var staleBytesAfterReset: Int = 0,
+    /** Another I2C address that (wrongly) answers reads with the chip ID. */
+    var ghostAddr: Int? = null,
 ) : UsbIo {
     private var staleLeft = 0
     /** Tuner register writes seen after the last FIFO reset (must be 0 when capturing). */
@@ -42,6 +44,7 @@ class FakeRtlUsb(
         val bytes = IntArray(length) { data[it].toInt() and 0xff }
         when {
             index == 0x610 -> {
+                if (value == ghostAddr && repeaterOpen) return length
                 if (value != tunerAddr || !repeaterOpen) return -1
                 if (length > 1) {
                     for (i in 1 until length) tunerRegs[bytes[0] + i - 1] = bytes[i]
@@ -69,6 +72,7 @@ class FakeRtlUsb(
         inCount++
         buffer.fill(0, 0, length)
         if (index == 0x600) {
+            if (value == ghostAddr && repeaterOpen) { buffer[0] = R82xx.CHIP_ID.toByte(); return length }
             if (value != tunerAddr || !repeaterOpen) return -1
             val raw = IntArray(5)
             raw[0] = R82xx.CHIP_ID

@@ -17,7 +17,16 @@ class RtlSdr private constructor(
     private val com: RtlCom,
     val tuner: R82xx,
     override val sampleRate: Int,
+    /** What the tuner probe saw at each I2C address (for diagnostics). */
+    val probeInfo: String = "",
 ) : Receiver {
+    override val details: List<Pair<String, String>>
+        get() = listOf(
+            "USB 문자열" to "제조사 '${com.manufacturer ?: "?"}' · 제품 '${com.product ?: "?"}'",
+            "튜너 탐지" to probeInfo,
+            "Blog V4 처리" to if (tuner.isBlogV4) "켜짐 (입력 경로 전환 사용)" else "꺼짐",
+        )
+
     private var raw = ByteArray(16384)
     private var ppm = 0
 
@@ -160,11 +169,11 @@ class RtlSdr private constructor(
                  sampleRate: Int = DEFAULT_RATE, narrowIf: Boolean = true): RtlSdr {
             val com = RtlCom(io)
             initBaseband(com)
-            val tuner = findTuner(com)
+            val (tuner, probe) = findTuner(com)
             com.setRepeater(true)
             tuner.init()
             com.setRepeater(false)
-            val sdr = RtlSdr(com, tuner, sampleRate)
+            val sdr = RtlSdr(com, tuner, sampleRate, probe)
             sdr.setSampleRate(sampleRate, narrowIf)
             sdr.setPpm(0)
             com.setDemodReg(0, 0x19, 0x05, 1) // RTL AGC off
@@ -196,19 +205,33 @@ class RtlSdr private constructor(
             com.setDemodReg(0, 0x0d, 0x83, 1) // TP_CK0 off
         }
 
-        private fun findTuner(com: RtlCom): R82xx {
-            val blogV4 = com.manufacturer == "RTLSDRBlog" && com.product == "Blog V4"
+        /** True when the USB strings say this is an RTL-SDR Blog V4 (R828D with input switching). */
+        fun isBlogV4Strings(manufacturer: String?, product: String?) =
+            manufacturer?.trim() == "RTLSDRBlog" && product?.trim() == "Blog V4"
+
+        /**
+         * Probes both tuner addresses and records what each returned. A Blog V4
+         * (by its USB strings) takes the R828D when 0x74 answers, even if 0x34
+         * also seems to; otherwise R820T first, as librtlsdr does.
+         */
+        private fun findTuner(com: RtlCom): Pair<R82xx, String> {
+            val blogV4 = isBlogV4Strings(com.manufacturer, com.product)
             com.setRepeater(true)
+            val ids = HashMap<R82xx.Chip, Int?>()
             try {
-                for (chip in listOf(R82xx.Chip.R820T, R82xx.Chip.R828D)) {
-                    val id = runCatching { com.i2cRead(chip.i2c, 0x00, 1)[0].toInt() and 0xff }.getOrNull()
-                    if (id == R82xx.CHIP_ID)
-                        return R82xx(com, chip, blogV4 && chip == R82xx.Chip.R828D, fast = false)
-                }
+                for (chip in R82xx.Chip.values())
+                    ids[chip] = runCatching { com.i2cRead(chip.i2c, 0x00, 1)[0].toInt() and 0xff }.getOrNull()
             } finally {
                 com.setRepeater(false)
             }
-            throw UsbIoException("지원하지 않는 튜너입니다 (R820T/R828D만 지원)")
+            val info = R82xx.Chip.values().joinToString(" · ") { c ->
+                "0x%02x(%s): %s".format(c.i2c, c.name, ids[c]?.let { "0x%02x".format(it) } ?: "응답 없음")
+            }
+            fun ok(c: R82xx.Chip) = ids[c] == R82xx.CHIP_ID
+            val order = if (blogV4) listOf(R82xx.Chip.R828D, R82xx.Chip.R820T) else listOf(R82xx.Chip.R820T, R82xx.Chip.R828D)
+            val chip = order.firstOrNull { ok(it) }
+                ?: throw UsbIoException("지원하지 않는 튜너입니다 (R820T/R828D만 지원) · $info")
+            return R82xx(com, chip, blogV4 && chip == R82xx.Chip.R828D, fast = false) to info
         }
 
         /** Default RTL2832U low-pass FIR, 20 bytes at demod page 1 regs 0x1c-0x2f. */

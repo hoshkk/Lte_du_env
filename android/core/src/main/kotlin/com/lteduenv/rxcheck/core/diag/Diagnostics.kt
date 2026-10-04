@@ -26,6 +26,7 @@ object SelfTest {
     fun run(rx: Receiver, centerHz: Long, setGain: ((Int?) -> Unit)?, restoreGain: Int?): List<Check> {
         val out = ArrayList<Check>()
         out += Check("수신기", rx.description, null)
+        for ((k, v) in rx.details) out += Check(k, v, null)
 
         val locked = PLL_TEST_HZ.count { rx.tune(it) }
         out += Check("PLL 잠금", "$locked/${PLL_TEST_HZ.size} (100·909·1745·1765 MHz)", locked == PLL_TEST_HZ.size,

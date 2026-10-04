@@ -11,8 +11,8 @@ android {
         applicationId = "com.lteduenv.rxcheck"
         minSdk = 26
         targetSdk = 34
-        versionCode = 18
-        versionName = "1.6.3"
+        versionCode = 19
+        versionName = "1.6.4"
     }
 
     buildTypes {

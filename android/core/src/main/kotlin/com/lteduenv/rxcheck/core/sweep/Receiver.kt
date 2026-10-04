@@ -17,6 +17,9 @@ interface Receiver : AutoCloseable {
      */
     fun capture(out: FloatArray, discardSamples: Int): Int
 
+    /** Identification lines for diagnostics (name to value). */
+    val details: List<Pair<String, String>> get() = emptyList()
+
     /** USB counters since the last call (null for sources without USB). */
     fun takeStats(): UsbStats? = null
 }
