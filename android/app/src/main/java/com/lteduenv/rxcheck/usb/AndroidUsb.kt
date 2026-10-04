@@ -68,6 +68,24 @@ object UsbAccess {
     private const val VID = 0x0bda
     private val PIDS = setOf(0x2832, 0x2838)
 
+    /**
+     * Asks the USB host to reset the dongle's port (bus reset and re-enumeration),
+     * for a dongle that is still on the bus but no longer answers. Uses the
+     * hidden UsbDeviceConnection.resetDevice(); phones that block hidden APIs
+     * return null. Never throws.
+     */
+    fun tryPortReset(context: Context): Boolean? = runCatching {
+        val manager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+        val device = findDongle(manager) ?: return null
+        if (!manager.hasPermission(device)) return null
+        val conn = manager.openDevice(device) ?: return null
+        try {
+            UsbDeviceConnection::class.java.getMethod("resetDevice").invoke(conn) as? Boolean
+        } finally {
+            runCatching { conn.close() }
+        }
+    }.getOrNull()
+
     fun isAttached(context: Context): Boolean =
         findDongle(context.getSystemService(Context.USB_SERVICE) as UsbManager) != null
 

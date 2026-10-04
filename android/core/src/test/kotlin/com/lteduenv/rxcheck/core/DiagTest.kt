@@ -73,16 +73,40 @@ class DiagTest {
         assertNull(checks.firstOrNull { it.name.startsWith("Gain 반응") })
     }
 
-    /** Stale FIFO bytes after the reset are found by the settle probe (fake USB). */
-    @Test fun settleProbeMeasuresStaleSamples() {
-        val usb = FakeRtlUsb(staleBytesAfterReset = 4096)
-        val sdr = RtlSdr.open(usb)
+    /**
+     * Model receiver: each capture starts with [stale] samples at the previous
+     * capture's level, and the level alternates 20 dB per capture; noise-like
+     * wobble (+-2 dB) on every block, like a real bursty input.
+     */
+    private class StaleModel(val stale: Int) : com.lteduenv.rxcheck.core.sweep.Receiver {
+        override val sampleRate = 2_400_000
+        override val description = "model"
+        private var n = 0
+        private val rnd = java.util.Random(3)
+        override fun tune(hz: Long) = true
+        override fun capture(out: FloatArray, discardSamples: Int): Int {
+            val newAmp = if (n % 2 == 0) 0.01 else 0.1; val oldAmp = if (n % 2 == 0) 0.1 else 0.01
+            n++
+            for (i in 0 until out.size / 2) {
+                val a = (if (i < stale) oldAmp else newAmp) * Math.pow(10.0, (rnd.nextDouble() * 4 - 2) / 20)
+                out[2 * i] = a.toFloat(); out[2 * i + 1] = 0f
+            }
+            return 0
+        }
+        override fun close() {}
+    }
+
+    @Test fun settleProbeCountsSamplesAtThePreviousLevel() {
         val plan = SweepPlan.create(909.3e6, 15e6, 54e3)
-        val r = SettleProbe.run(sdr, plan, 2048, null, null, repeats = 4)
-        assertEquals(3, r.transitions)
-        assertEquals(2048, r.maxSettle)
-        val clean = SettleProbe.run(RtlSdr.open(FakeRtlUsb()), plan, 2048, null, null, repeats = 4)
+        val r = SettleProbe.run(StaleModel(3000), plan, 2048, null, null, repeats = 6)
+        assertEquals(5, r.transitions)
+        assertEquals(5, r.informative)
+        assertTrue("${r.settleSamples}", r.settleSamples.all { it in 2816..3328 }) // 3000 rounded to 256-sample blocks
+        val clean = SettleProbe.run(StaleModel(0), plan, 2048, null, null, repeats = 6)
         assertEquals(0, clean.maxSettle)
+        // Steady level (no step): nothing to judge, no false "too long".
+        val flat = SettleProbe.run(RtlSdr.open(FakeRtlUsb()), plan, 2048, null, null, repeats = 4)
+        assertEquals(0, flat.informative)
     }
 
     @Test fun speedReportSplitsSegmentTime() {

@@ -203,6 +203,15 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
                         if (!connectedOnce && attempt > MAX_RECONNECTS) throw e
                         _state.update { it.copy(status = "USB 재연결 중 (${attempt}회째) · ${e.message}") }
                         delay(minOf(2000L, 300L * attempt))
+                        // Still on the bus but not answering after a few tries: try a port reset
+                        // (works only where the phone allows it), then give it time to come back.
+                        if (!demo && connectedOnce && attempt % 3 == 0 && UsbAccess.isAttached(getApplication())) {
+                            val r = UsbAccess.tryPortReset(getApplication())
+                            _state.update { it.copy(usb = it.usb.copy(last = "USB 포트 리셋 시도: " +
+                                when (r) { true -> "성공"; false -> "실패"; null -> "이 폰에서는 불가" },
+                                lastTime = System.currentTimeMillis())) }
+                            if (r == true) delay(1500)
+                        }
                     } finally {
                         runCatching { rx?.close() }
                         runCatching { usb?.close() }

@@ -606,14 +606,16 @@ private fun DiagDialog(state: UiState, vm: MeasureViewModel, onDismiss: () -> Un
                 }
                 d.settle?.let { r ->
                     Text("전환 안정 시간" + if (d.demo) " (데모)" else "", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    Text("전환 ${r.transitions}회 · 안정까지 최대 ${r.maxSettle} 샘플 (${(r.maxSettle / 2.4e3).f(2)} ms)", fontSize = 12.sp)
-                    Text("레벨 차이 6 dB 이상 전환 ${r.informative}회" +
-                        (r.maxInformativeSettle?.let { " · 그중 최대 $it 샘플" } ?: ""), fontSize = 12.sp)
-                    Text("현재 버리는 샘플: ${r.currentDiscard}", fontSize = 12.sp)
-                    val over = r.maxSettle > r.currentDiscard
-                    Text(if (over) "⚠ 측정된 안정 시간이 현재 버림보다 깁니다 · 구간 경계 레벨을 확인하세요"
-                        else "측정된 안정 시간이 현재 버림 안에 있습니다 (설정은 바꾸지 않음)",
-                        color = if (over) Warn else Good, fontSize = 12.sp)
+                    Text("전환 ${r.transitions}회 중 판단 가능(레벨 차이 6 dB 이상) ${r.informative}회", fontSize = 12.sp)
+                    if (r.informative == 0) Text("판단할 만한 전환이 없습니다 (입력 레벨 변화가 작음) · 다시 측정해 보세요", color = Dim, fontSize = 12.sp)
+                    else {
+                        Text("이전 구간 레벨이 남은 샘플: 최대 ${r.maxSettle} (${(r.maxSettle / 2.4e3).f(2)} ms)", fontSize = 12.sp)
+                        Text("현재 버리는 샘플: ${r.currentDiscard}", fontSize = 12.sp)
+                        val over = r.maxSettle > r.currentDiscard
+                        Text(if (over) "⚠ 이전 레벨이 현재 버림보다 길게 남습니다 · 결과를 보내주세요"
+                            else "현재 버림 안에 들어옵니다 (설정은 바꾸지 않음)",
+                            color = if (over) Warn else Good, fontSize = 12.sp)
+                    }
                     Text("전환마다 Gain을 2↔14로 바꿔 이전 샘플을 레벨로 구분합니다. 여러 번 측정해 같은 결과가 나올 때만 근거로 쓰세요.",
                         color = Dim, fontSize = 11.sp)
                 }

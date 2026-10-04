@@ -75,39 +75,31 @@ object SelfTest {
 }
 
 /**
- * Measures how long after a retune the samples settle, to give the discard
- * length a measured basis. Each retune also flips the gain between low and high
- * (when [setGain] is available) so samples from before the retune are
- * recognisable by their level; nothing here changes the sweep settings.
+ * Measures how many samples after a retune still carry the previous segment's
+ * level, to give the discard length a measured basis. Each retune also flips
+ * the gain between low and high (when [setGain] is available) so old and new
+ * samples differ clearly in level. A sample block counts as "old" while its
+ * (median-smoothed) level is closer to the previous capture's level than to the
+ * new one; this tolerates the level wobble of real, bursty signals. Transitions
+ * whose old and new levels differ by less than [MIN_STEP_DB] say nothing and
+ * are left out. Nothing here changes the sweep settings.
  */
 object SettleProbe {
     const val BLOCK = 256
     const val CAPTURE = 16_384
-    const val TOL_DB = 1.5
+    const val MIN_STEP_DB = 6.0
 
     data class Result(
         val transitions: Int,
-        /** Samples until the level stayed within [TOL_DB] of its final value, per transition. */
+        /** Samples still at the old level, for each informative transition. */
         val settleSamples: List<Int>,
-        /** Level change across each transition (old -> new), dB: small steps say little. */
+        /** Level change across each transition (old -> new), dB. */
         val stepDb: List<Double>,
         val currentDiscard: Int,
     ) {
+        val informative get() = settleSamples.size
         val maxSettle get() = settleSamples.maxOrNull() ?: 0
-        /** Transitions with a level step of 6 dB or more (the informative ones). */
-        val informative get() = stepDb.count { abs(it) >= 6 }
-        val maxInformativeSettle get() = settleSamples.filterIndexed { i, _ -> abs(stepDb[i]) >= 6 }.maxOrNull()
-    }
-
-    /** Blocks until the power stays within [TOL_DB] of the median of the second half. */
-    fun settleIndex(power: DoubleArray): Int {
-        val tail = power.copyOfRange(power.size / 2, power.size).sorted()
-        val final = tail[tail.size / 2]
-        var k = power.size
-        for (i in power.indices.reversed()) {
-            if (abs(db(power[i]) - db(final)) <= TOL_DB) k = i else break
-        }
-        return k
+        val maxInformativeSettle get() = settleSamples.maxOrNull()
     }
 
     fun blockPower(iq: FloatArray, samples: Int): DoubleArray = DoubleArray(samples / BLOCK) { b ->
@@ -116,27 +108,44 @@ object SettleProbe {
         s / BLOCK
     }
 
+    private fun median(v: List<Double>) = v.sorted()[v.size / 2]
+
+    /** Samples at the start whose level is still closer to [oldDb] than to [newDb]. */
+    fun oldLevelSamples(pDb: DoubleArray, oldDb: Double, newDb: Double): Int {
+        var last = -1
+        for (i in pDb.indices) {
+            val w = (maxOf(0, i - 2)..minOf(pDb.size - 1, i + 2)).map { pDb[it] }
+            val s = median(w)
+            if (abs(s - oldDb) < abs(s - newDb)) last = i
+        }
+        return (last + 1) * BLOCK
+    }
+
     fun run(rx: Receiver, plan: SweepPlan, currentDiscard: Int, setGain: ((Int?) -> Unit)?, restoreGain: Int?, repeats: Int = 12): Result {
         val freqs = plan.segments.map { it.centerHz }.let { if (it.size >= 2) it else listOf(it[0], it[0] + 1_000_000L) }
         val iq = FloatArray(2 * CAPTURE)
         val settle = ArrayList<Int>(); val steps = ArrayList<Double>()
         var prevFinal: Double? = null
+        var transitions = 0
         try {
             for (r in 0 until repeats) {
                 setGain?.invoke(if (r % 2 == 0) 2 else 14)
                 rx.tune(freqs[r % freqs.size])
                 rx.capture(iq, 0)
-                val p = blockPower(iq, CAPTURE)
-                val k = settleIndex(p)
-                val tail = p.copyOfRange(p.size / 2, p.size).sorted()
-                val final = tail[tail.size / 2]
-                if (prevFinal != null) { settle += k * BLOCK; steps += db(final) - db(prevFinal) }
+                val pDb = blockPower(iq, CAPTURE).map { db(it) }.toDoubleArray()
+                val final = median(pDb.toList().subList(pDb.size / 2, pDb.size))
+                prevFinal?.let { old ->
+                    transitions++
+                    val step = final - old
+                    steps += step
+                    if (abs(step) >= MIN_STEP_DB) settle += oldLevelSamples(pDb, old, final)
+                }
                 prevFinal = final
             }
         } finally {
             setGain?.invoke(restoreGain)
         }
-        return Result(settle.size, settle, steps, currentDiscard)
+        return Result(transitions, settle, steps, currentDiscard)
     }
 }
 
