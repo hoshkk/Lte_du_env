@@ -99,9 +99,9 @@ class RtlSdr private constructor(
 
     override fun takeStats(): UsbStats = com.stats.snapshot().also { com.stats.reset() }
 
-    fun setGain(step: Int?) {
+    fun setGain(step: Int?, vga: Int = R82xx.DEFAULT_VGA) {
         com.setRepeater(true)
-        if (step == null) tuner.setAutoGain() else tuner.setManualGain(step)
+        if (step == null) tuner.setAutoGain() else tuner.setManualGain(step, vga)
         com.setRepeater(false)
     }
 

@@ -244,8 +244,8 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
             val s = _state.value.settings
             if (rx is RtlSdr) {
                 if (s.narrowIf != opened.narrowIf) return LoopEnd.RECONFIGURE
-                if (applied == null || applied.gainStep != s.gainStep || applied.fastTune != s.fastTune) {
-                    rx.setGain(s.gainStep)
+                if (applied == null || applied.gainStep != s.gainStep || applied.vgaStep != s.vgaStep || applied.fastTune != s.fastTune) {
+                    rx.setGain(s.gainStep, s.vgaStep)
                     rx.fastTune = s.fastTune
                 }
                 rx.settleMs = s.settleMs
@@ -342,35 +342,59 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
      * lowest gain where the front end's noise sets the floor). Ref/scale are then
      * fitted to the sweep at the chosen gain. Takes about 16 sweeps.
      */
+    /**
+     * "자동 맞춤" with a real dongle, on the current span, in two stages:
+     *  1. LNA/mixer step (coarse 0,3,..15 then +-2 around the pick) at the current VGA;
+     *  2. IF gain (VGA, coarse 2,5,..14 then +-1) at the chosen step.
+     * Both use [GainLadder.choose]: no clipping, >= 6 dB headroom, and the lowest
+     * setting whose floor is 10 dB above the lowest setting's floor (the stage is
+     * then no longer limited by the 8-bit ADC's own noise), else the highest
+     * allowed. Ref/scale are fitted to the final sweep; the result is remembered
+     * for this mode and band.
+     */
     private suspend fun runGainLadder(rx: RtlSdr, engine: SweepEngine, s: Settings, p: SweepPlan) {
         val ctx = currentCoroutineContext()
-        val steps = ArrayList<GainLadder.Step>()
-        val traces = HashMap<Int, Trace>()
+        val avg = s.effectiveAverages(rx.sampleRate)
+        var last: Trace? = null
+        fun measure(label: String, step: Int, vga: Int, key: Int): GainLadder.Step? {
+            if (!ctx.isActive || !autoFitRequested) return null
+            _state.update { it.copy(autoFit = "자동 맞춤 중 · $label $key 측정") }
+            rx.setGain(step, vga)
+            val t = engine.sweep(p, avg, s.dcPatch, s.iqMeanRemoval, isActive = { ctx.isActive }) ?: return null
+            last = t
+            val floor = Analysis.medianBinDb(t) ?: return null
+            return GainLadder.Step(key, t.clippedFraction, t.peakAdc, floor)
+        }
+        val startVga = s.vgaStep
+        var g = 0; var v = startVga
+        var reason = ""
         try {
-            for (g in 0..Settings.MAX_GAIN_STEP) {
-                if (!ctx.isActive || !autoFitRequested) return
-                _state.update { it.copy(autoFit = "자동 맞춤 중 · Gain $g/${Settings.MAX_GAIN_STEP} 측정") }
-                rx.setGain(g)
-                val t = engine.sweep(p, s.effectiveAverages(rx.sampleRate), s.dcPatch, s.iqMeanRemoval,
-                    isActive = { ctx.isActive }) ?: return
-                val floor = Analysis.medianBinDb(t) ?: continue
-                steps += GainLadder.Step(g, t.clippedFraction, t.peakAdc, floor)
-                traces[g] = t
+            val stage1 = GainLadder.search(listOf(0, 3, 6, 9, 12, 15), 2, Settings.MAX_GAIN_STEP) {
+                measure("1/2 · Gain", it, startVga, it)
+            } ?: return
+            val c1 = stage1.first ?: run {
+                finishAutoFit("자동 맞춤 실패 · 모든 Gain에서 입력 과다 · 감쇠기를 사용하세요 (Gain 그대로)")
+                return
             }
+            g = c1.step.gain
+            val stage2 = GainLadder.search(listOf(2, 5, 8, 11, 14), 1, 15) {
+                measure("2/2 · IF 이득(VGA)", g, it, it)
+            } ?: return
+            val c2 = stage2.first
+            v = c2?.step?.gain ?: startVga
+            reason = (c2 ?: c1).reason
+            // Final sweep at the chosen pair, for the Ref/scale fit.
+            measure("확인 · Gain $g VGA", g, v, v) ?: return
         } finally {
-            rx.setGain(_state.value.settings.gainStep) // back to the setting unless we change it below
+            val cur = _state.value.settings
+            rx.setGain(cur.gainStep, cur.vgaStep) // back to the setting unless changed below
         }
-        val choice = GainLadder.choose(steps)
-        if (choice == null) {
-            finishAutoFit("자동 맞춤 실패 · 모든 Gain에서 입력 과다 · 감쇠기를 사용하세요 (Gain 그대로)")
-            return
-        }
-        val g = choice.step.gain
-        commit(_state.value.settings.copy(gainStep = g), clearTraces = true)
-        traces[g]?.let { t -> AutoFit.decide(listOf(t), g, s.offsetDb) }?.let { d ->
+        commit(_state.value.settings.copy(gainStep = g, vgaStep = v), clearTraces = true)
+        last?.let { t -> AutoFit.decide(listOf(t), g, s.offsetDb) }?.let { d ->
             commit(_state.value.settings.copy(refLevelDb = d.refLevelDb, dbPerDiv = d.dbPerDiv), clearTraces = false)
         }
-        finishAutoFit("자동 맞춤 완료 · Gain $g/${Settings.MAX_GAIN_STEP} · ${choice.reason}")
+        store.saveAutoGain(s.mode, s.band, g, v)
+        finishAutoFit("자동 맞춤 완료 · Gain $g/15 · VGA $v/15 · $reason (이 밴드에 기억)")
     }
 
     private fun finishAutoFit(msg: String) {
@@ -384,7 +408,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Runs a diagnostic on the measurement thread with the open receiver. */
     private fun runDiag(req: Int, rx: Receiver, engine: SweepEngine, s: Settings, p: SweepPlan) {
-        val setGain: ((Int?) -> Unit)? = (rx as? RtlSdr)?.let { r -> { g: Int? -> r.setGain(g) } }
+        val setGain: ((Int?) -> Unit)? = (rx as? RtlSdr)?.let { r -> { g: Int? -> r.setGain(g, s.vgaStep) } }
         val demo = rx !is RtlSdr
         try {
             when (req) {
@@ -419,7 +443,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun baselineKeyChanged(a: Settings?, b: Settings) =
-        a == null || a.gainStep != b.gainStep || a.narrowIf != b.narrowIf || a.dcPatch != b.dcPatch ||
+        a == null || a.gainStep != b.gainStep || a.vgaStep != b.vgaStep || a.narrowIf != b.narrowIf || a.dcPatch != b.dcPatch ||
             a.iqMeanRemoval != b.iqMeanRemoval
 
     /** Double tap on the graph: fit Ref and dB/div to what is on screen. Gain is not touched. */
@@ -459,7 +483,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
         store.saveSettings(settings)
         _state.update {
             val old = it.settings
-            val levelsChanged = clearTraces || old.gainStep != settings.gainStep || old.narrowIf != settings.narrowIf ||
+            val levelsChanged = clearTraces || old.gainStep != settings.gainStep || old.vgaStep != settings.vgaStep || old.narrowIf != settings.narrowIf ||
                 old.dcPatch != settings.dcPatch || old.iqMeanRemoval != settings.iqMeanRemoval ||
                 old.maxHold != settings.maxHold
             it.copy(settings = settings, hold = if (levelsChanged) null else it.hold,
@@ -467,9 +491,16 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun selectMode(mode: Mode) = apply(_state.value.settings.withProfile(mode, _state.value.settings.band))
+    fun selectMode(mode: Mode) = apply(withRememberedGain(_state.value.settings.withProfile(mode, _state.value.settings.band)))
 
-    fun selectBand(band: Band) = apply(_state.value.settings.withProfile(_state.value.settings.mode, band))
+    fun selectBand(band: Band) = apply(withRememberedGain(_state.value.settings.withProfile(_state.value.settings.mode, band)))
+
+    /** The last "자동 맞춤" result for this mode and band, if there is one. */
+    private fun withRememberedGain(s: Settings): Settings {
+        val (g, v) = store.loadAutoGain(s.mode, s.band) ?: return s
+        _state.update { it.copy(autoFit = "이 밴드의 지난 자동 맞춤 적용 · Gain $g · VGA $v") }
+        return s.copy(gainStep = g, vgaStep = v)
+    }
 
     fun stepGain(delta: Int) {
         val s = _state.value.settings
@@ -718,7 +749,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
         return buildString {
             append("# RX 점검; mode=${s.mode.title}; band=${s.band?.label ?: "-"}; center_mhz=${s.centerMhz}; span_mhz=${s.spanMhz}; " +
                 "channel_bw_mhz=${s.channelBwMhz}; rbw_hz=${fmt("%.0f", 1.44 * t.plan.binHz)}; enbw_hz=${fmt("%.0f", t.enbwHz)}; " +
-                "averages=${s.effectiveAverages()}; vbw_hz=${fmt("%.0f", s.vbwActualHz())}; vbw_setting=${s.vbwKhz?.let { "${it}k" } ?: "AUTO"}; gain_step=${s.gainStep ?: "AGC"}; if_filter=${if (s.narrowIf) "narrow" else "6MHz"}; " +
+                "averages=${s.effectiveAverages()}; vbw_hz=${fmt("%.0f", s.vbwActualHz())}; vbw_setting=${s.vbwKhz?.let { "${it}k" } ?: "AUTO"}; gain_step=${s.gainStep ?: "AGC"}; vga=${s.vgaStep}; if_filter=${if (s.narrowIf) "narrow" else "6MHz"}; " +
                 "fast_tune=${s.fastTune}; settle_ms=${s.settleMs}; ppm=${s.ppm}; offset_db=${s.offsetDb}; clipping=${fmt("%.5f", t.clippedFraction)}; " +
                 "sweep_ms=${t.timing?.totalMs ?: ""}; device=${st.device ?: ""}; unit=dBFS+offset (상대값)\n")
             st.results?.let { r ->

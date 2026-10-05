@@ -50,6 +50,22 @@ object GainLadder {
 
     data class Choice(val step: Step, val floorRiseDb: Double, val reason: String)
 
+    /**
+     * Coarse-to-fine search over 0..[max]: measures the [coarse] values, picks
+     * with [choose], then measures the untried values within [radius] of the
+     * pick and picks again from everything. [measure] returns null to abort.
+     */
+    fun search(coarse: List<Int>, radius: Int, max: Int, measure: (Int) -> Step?): Pair<Choice?, List<Step>>? {
+        val steps = ArrayList<Step>()
+        for (g in coarse) steps += measure(g) ?: return null
+        val first = choose(steps) ?: return null to steps
+        for (g in (first.step.gain - radius)..(first.step.gain + radius)) {
+            if (g < 0 || g > max || steps.any { it.gain == g }) continue
+            steps += measure(g) ?: return null
+        }
+        return choose(steps) to steps
+    }
+
     fun choose(steps: List<Step>): Choice? {
         if (steps.isEmpty()) return null
         val base = steps.minBy { it.gain }.floorDb

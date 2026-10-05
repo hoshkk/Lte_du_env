@@ -125,11 +125,15 @@ class R82xx(
     }
 
     /** Manual gain step 0..15: LNA and mixer gain index (roughly 3.5 dB per step). */
-    fun setManualGain(step: Int) {
+    /**
+     * [step] sets LNA and mixer gain index together (0..15). [vga] is the IF
+     * amplifier before the ADC, 0..15 (about 3.5 dB per step; librtlsdr fixes 8).
+     */
+    fun setManualGain(step: Int, vga: Int = DEFAULT_VGA) {
         val s = step.coerceIn(0, 15)
         writeMask(0x05, 0x10, 0x10) // LNA manual
         writeMask(0x07, 0x00, 0x10) // mixer manual
-        writeMask(0x0c, 0x08, 0x9f) // VGA manual, fixed
+        writeMask(0x0c, vga.coerceIn(0, 15), 0x9f) // VGA manual
         writeMask(0x05, s, 0x0f)
         writeMask(0x07, s, 0x0f)
     }
@@ -320,6 +324,8 @@ class R82xx(
         const val XTAL_HZ = 28_800_000L
         const val IF_HZ = 3_570_000L
         const val CHIP_ID = 0x69
+        /** librtlsdr's fixed manual-mode VGA setting (about 16 dB). */
+        const val DEFAULT_VGA = 8
         private const val POINTERLESS_CHECKS = 3
         private const val FILT_HP_BW1 = 350_000
         private const val FILT_HP_BW2 = 380_000

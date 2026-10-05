@@ -249,6 +249,7 @@ private fun InfoLine(state: UiState) {
         "CENTER ${s.centerMhz.f(3)}",
         "SPAN ${s.spanMhz.f(if (s.spanMhz < 10) 2 else 1)} MHz",
         "RBW ${khz(s.rbwActualHz())}",
+        if (s.gainStep != null && s.vgaStep != 8) "VGA ${s.vgaStep}" else null,
         "VBW ${khz(s.vbwActualHz())}" + (if (s.vbwKhz == null) " (평균 ${s.effectiveAverages()})" else ""),
         if (s.offsetDb != 0.0) "Offset ${signed(s.offsetDb)}" else null,
         // Full-span completion time vs. how often the screen gets new data (every segment).

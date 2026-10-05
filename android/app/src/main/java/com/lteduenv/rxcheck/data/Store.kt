@@ -23,6 +23,16 @@ class Store(context: Context) {
 
     fun saveSettings(s: Settings) = write("", s)
 
+    /** Last "자동 맞춤" result (gain step, VGA) per mode and band. */
+    fun saveAutoGain(mode: Mode, band: Band?, gain: Int, vga: Int) =
+        prefs.edit().putString("autogain_${mode.name}_${band?.name ?: "custom"}", "$gain,$vga").apply()
+
+    fun loadAutoGain(mode: Mode, band: Band?): Pair<Int, Int>? = runCatching {
+        val v = prefs.getString("autogain_${mode.name}_${band?.name ?: "custom"}", null) ?: return null
+        val (g, vga) = v.split(",").map { it.trim().toInt() }
+        if (g in 0..15 && vga in 0..15) g to vga else null
+    }.getOrNull()
+
     fun hasPreset(mode: Mode) = prefs.contains(presetPrefix(mode) + "mode")
     fun savePreset(mode: Mode, s: Settings) = write(presetPrefix(mode), s.copy(mode = mode))
     fun loadPreset(mode: Mode): Settings? = read(presetPrefix(mode))
@@ -45,6 +55,7 @@ class Store(context: Context) {
                 channelBwMhz = prefs.double(p + "chbw", d.channelBwMhz),
                 rbwKhz = prefs.double(p + "rbw", d.rbwKhz),
                 averages = prefs.getInt(p + "avg", d.averages),
+                vgaStep = prefs.getInt(p + "vga", d.vgaStep),
                 vbwKhz = prefs.double(p + "vbw", -1.0).takeIf { it > 0 },
                 gainStep = prefs.getInt(p + "gain", d.gainStep ?: -1).takeIf { it >= 0 },
                 offsetDb = prefs.double(p + "offset", 0.0),
@@ -71,7 +82,7 @@ class Store(context: Context) {
             .putString(p + "mode", s.mode.name).putString(p + "band", s.band?.name)
             .putString(p + "center", s.centerMhz.toString()).putString(p + "span", s.spanMhz.toString())
             .putString(p + "chbw", s.channelBwMhz.toString()).putString(p + "rbw", s.rbwKhz.toString())
-            .putInt(p + "avg", s.averages).putString(p + "vbw", s.vbwKhz?.toString() ?: "-1").putInt(p + "gain", s.gainStep ?: -1)
+            .putInt(p + "avg", s.averages).putInt(p + "vga", s.vgaStep).putString(p + "vbw", s.vbwKhz?.toString() ?: "-1").putInt(p + "gain", s.gainStep ?: -1)
             .putString(p + "offset", s.offsetDb.toString()).putBoolean(p + "hold", s.maxHold)
             .putString(p + "thr", s.thresholdDb.toString()).putBoolean(p + "fast", s.fastTune)
             .putBoolean(p + "narrowif", s.narrowIf).putInt(p + "settle", s.settleMs)
@@ -93,7 +104,7 @@ class Store(context: Context) {
     private fun key(p: SweepPlan, s: Settings) =
         "%d_%d_%d_%d_g%s_if%s_dc%s%s".format(p.startHz.toLong(), p.binHz.toLong(), p.points, p.sampleRate,
             s.gainStep?.toString() ?: "agc", if (s.narrowIf) "n" else "w", if (s.dcPatch) "1" else "0",
-            if (s.iqMeanRemoval) "" else "_m0")
+            if (s.iqMeanRemoval) "" else "_m0") + if (s.vgaStep == 8) "" else "_v${s.vgaStep}"
 
     fun saveBaseline(t: Trace, s: Settings) = saveTrace("", t, s)
     fun loadBaseline(plan: SweepPlan, s: Settings) = loadTrace("", plan, s)

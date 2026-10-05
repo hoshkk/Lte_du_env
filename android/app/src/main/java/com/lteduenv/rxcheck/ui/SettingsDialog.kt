@@ -55,6 +55,7 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
     var div by remember { mutableStateOf(current.dbPerDiv.toString()) }
     var agc by remember { mutableStateOf(current.gainStep == null) }
     var gain by remember { mutableStateOf((current.gainStep ?: 4).toFloat()) }
+    var vga by remember { mutableStateOf(current.vgaStep.toFloat()) }
     var fast by remember { mutableStateOf(current.fastTune) }
     var narrowIf by remember { mutableStateOf(current.narrowIf) }
     var settle by remember { mutableStateOf(current.settleMs.toString()) }
@@ -84,7 +85,7 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
             band = band?.takeIf { it.rxCenterMhz * 1e6 in (v[0] - v[1] / 2) * 1e6..(v[0] + v[1] / 2) * 1e6 },
             centerMhz = v[0], spanMhz = v[1], channelBwMhz = v[2], rbwKhz = v[3], averages = a, vbwKhz = vbv,
             offsetDb = v[4], thresholdDb = v[5], refLevelDb = v[6], dbPerDiv = v[7],
-            gainStep = if (agc) null else gain.roundToInt(), fastTune = fast, narrowIf = narrowIf,
+            gainStep = if (agc) null else gain.roundToInt(), vgaStep = vga.roundToInt(), fastTune = fast, narrowIf = narrowIf,
             settleMs = st, channelPower = chPower, dcPatch = dc,
             iqMeanRemoval = iqMean, dcShift = dcShift, internalCorrection = correction, ppm = pp,
         )
@@ -203,6 +204,10 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
                             Row(verticalAlignment = Alignment.CenterVertically) { Switch(agc, { agc = it }); Text("  튜너 AGC") }
                             Text("수동 이득 ${gain.roundToInt()}/15${if (agc) " (AGC 사용 중)" else ""}", fontSize = 13.sp)
                             Slider(gain, { gain = it }, valueRange = 0f..15f, steps = 14, enabled = !agc)
+                            Text("IF 이득 (VGA) ${vga.roundToInt()}/15 (기본 8)${if (agc) " · AGC에서는 무시" else ""}", fontSize = 13.sp)
+                            Slider(vga, { vga = it }, valueRange = 0f..15f, steps = 14, enabled = !agc)
+                            Text("ADC 바로 앞 증폭(단계당 약 3.5 dB). 8-bit ADC 자체 잡음보다 신호·잡음을 충분히 키워야 감도가 납니다. " +
+                                "'자동 맞춤'이 Gain과 함께 자동으로 정하고 밴드별로 기억합니다.", fontSize = 11.sp, color = Dim)
                             Text("장비 커플러·모니터 포트처럼 레벨이 높으면 낮게. 위치·시간 비교는 같은 수동 이득으로. 클리핑 경고가 뜨면 이득을 낮추거나 감쇠기를 쓰세요.",
                                 fontSize = 11.sp, color = Dim)
                             Row(verticalAlignment = Alignment.CenterVertically) { Switch(narrowIf, { narrowIf = it }); Text("  좁은 IF 필터 (권장)") }

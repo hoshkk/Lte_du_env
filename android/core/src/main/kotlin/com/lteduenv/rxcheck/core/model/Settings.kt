@@ -47,6 +47,8 @@ data class Settings(
     val vbwKhz: Double? = null,
     /** Tuner gain step 0..15, or null for tuner AGC. */
     val gainStep: Int? = 2,
+    /** IF (VGA) gain 0..15 used with a manual [gainStep]; 8 = librtlsdr's fixed value. */
+    val vgaStep: Int = 8,
     val offsetDb: Double = 0.0,
     val maxHold: Boolean = false,
     /** Spurious: dB above floor. Reverse: dB above the median block. */
@@ -92,6 +94,7 @@ data class Settings(
         gainStep != null && gainStep !in 0..MAX_GAIN_STEP -> "이득 단계: 0–15"
         settleMs !in 0..100 -> "안정화 대기: 0–100 ms"
         ppm !in -200..200 -> "주파수 보정: -200–200 ppm"
+        vgaStep !in 0..15 -> "IF 이득(VGA): 0–15"
         channelBwMhz !in 0.01..60.0 -> "채널 대역폭: 0.01–60 MHz"
         dbPerDiv !in 1.0..20.0 -> "dB/div 범위: 1–20"
         else -> null

@@ -47,4 +47,28 @@ class GainLadderTest {
         assertTrue(strong.peakAdc in 0.25..0.5)       // -10 dBFS: amplitude about 0.32
         assertEquals(strong.peakAdc, strong.withLevels(strong.levelsDb).peakAdc, 0.0)
     }
+
+    /** Coarse-to-fine finds the same pick as measuring every step, with fewer sweeps. */
+    @Test fun coarseFineSearchMatchesFullLadder() {
+        val full = ladder(0.01)
+        var measured = 0
+        val (choice, steps) = GainLadder.search(listOf(0, 3, 6, 9, 12, 15), 2, 15) { g -> measured++; full[g] }!!
+        assertEquals(GainLadder.choose(full)!!.step.gain, choice!!.step.gain)
+        assertTrue("measured $measured", measured <= 10)
+        assertEquals(measured, steps.size)
+        // Abort propagates.
+        assertEquals(null, GainLadder.search(listOf(0, 3), 1, 15) { null })
+    }
+
+    /** The VGA setting lands in R82xx register 0x0c (low nibble), manual mode bits clear. */
+    @Test fun vgaIsProgrammed() {
+        val usb = FakeRtlUsb(tunerAddr = 0x34, manufacturer = "Realtek", product = "RTL2838UHIDIR")
+        val sdr = com.lteduenv.rxcheck.core.rtl.RtlSdr.open(usb)
+        sdr.setGain(5, 11)
+        assertEquals(11, usb.tunerRegs[0x0c] and 0x0f)
+        assertEquals(0, usb.tunerRegs[0x0c] and 0x90)
+        assertEquals(5, usb.tunerRegs[0x05] and 0x0f)
+        sdr.setGain(5)
+        assertEquals(8, usb.tunerRegs[0x0c] and 0x0f)
+    }
 }
