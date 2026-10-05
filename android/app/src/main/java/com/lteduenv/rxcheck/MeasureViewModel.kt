@@ -249,6 +249,11 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
                     rx.fastTune = s.fastTune
                 }
                 rx.settleMs = s.settleMs
+                if (applied == null || applied.ppm != s.ppm) {
+                    rx.setPpm(s.ppm)
+                    engine.invalidateTuning()
+                    _state.update { it.copy(device = rx.description) }
+                }
             }
             val p = SweepPlan.create(s.centerMhz * 1e6, s.spanMhz * 1e6, s.rbwKhz * 1e3, rx.sampleRate, s.dcShift)
             val req = diagRequest
@@ -559,6 +564,25 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
             maxHold = true), clearTraces = true)
     }
 
+    /**
+     * Sets the ppm correction so the selected marker's frequency reads
+     * [actualMhz] (a signal whose true frequency is known). Returns an error
+     * text, or null.
+     */
+    fun calibrateFromMarker(actualMhz: Double): String? {
+        val st = _state.value
+        val m = st.markers.firstOrNull { it.index == st.selectedMarker }?.freqHz
+            ?: return "먼저 M${st.selectedMarker} 마커를 기준 신호의 봉우리에 놓으세요 (Peak 버튼)"
+        if (!actualMhz.isFinite() || actualMhz !in 24.0..1766.0) return "실제 주파수(MHz)를 확인하세요"
+        val ppm = st.settings.ppmFor(m, actualMhz * 1e6)
+        if (ppm !in -200..200) return "계산된 보정 ${ppm} ppm이 너무 큽니다 · 마커 위치나 주파수를 확인하세요"
+        commit(st.settings.copy(ppm = ppm), clearTraces = true)
+        // The marker now points at the old reading; move it to where the signal will appear.
+        _state.update { s -> s.copy(markers = s.markers.map { if (it.index == s.selectedMarker) it.copy(freqHz = actualMhz * 1e6) else it },
+            status = "주파수 보정 ${if (ppm > 0) "+" else ""}$ppm ppm 적용") }
+        return null
+    }
+
     fun toggleSniffSound() = _state.update { it.copy(sniffSound = !it.sniffSound) }
 
     /** Settings in use before near-field sniffing started, restored when it ends. */
@@ -695,7 +719,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
             append("# RX 점검; mode=${s.mode.title}; band=${s.band?.label ?: "-"}; center_mhz=${s.centerMhz}; span_mhz=${s.spanMhz}; " +
                 "channel_bw_mhz=${s.channelBwMhz}; rbw_hz=${fmt("%.0f", 1.44 * t.plan.binHz)}; enbw_hz=${fmt("%.0f", t.enbwHz)}; " +
                 "averages=${s.effectiveAverages()}; vbw_hz=${fmt("%.0f", s.vbwActualHz())}; vbw_setting=${s.vbwKhz?.let { "${it}k" } ?: "AUTO"}; gain_step=${s.gainStep ?: "AGC"}; if_filter=${if (s.narrowIf) "narrow" else "6MHz"}; " +
-                "fast_tune=${s.fastTune}; settle_ms=${s.settleMs}; offset_db=${s.offsetDb}; clipping=${fmt("%.5f", t.clippedFraction)}; " +
+                "fast_tune=${s.fastTune}; settle_ms=${s.settleMs}; ppm=${s.ppm}; offset_db=${s.offsetDb}; clipping=${fmt("%.5f", t.clippedFraction)}; " +
                 "sweep_ms=${t.timing?.totalMs ?: ""}; device=${st.device ?: ""}; unit=dBFS+offset (상대값)\n")
             st.results?.let { r ->
                 append("# status=${r.status.validity.name}; title=${r.status.title}; notes=${r.status.notes.joinToString(" | ")}\n")

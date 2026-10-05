@@ -37,7 +37,8 @@ class RtlSdr private constructor(
 
     override val description: String
         get() = buildString {
-            append(if (tuner.isBlogV4) "RTL-SDR Blog V4" else "RTL-SDR ${tuner.chip}")
+            append(if (tuner.isBlogV4) "RTL-SDR Blog V4" else if (tuner.chip == R82xx.Chip.R820T) "RTL-SDR R820T/R860 (V3 계열)" else "RTL-SDR ${tuner.chip}")
+            if (ppm != 0) append(" · 보정 ").append(if (ppm > 0) "+" else "").append(ppm).append(" ppm")
             append(" · ").append(if (tuner.fast) "고속 동조" else "기본 동조")
             append(" · IF ").append(if (tuner.ifHz == R82xx.IF_HZ) "6 MHz" else "좁음")
         }
@@ -106,7 +107,8 @@ class RtlSdr private constructor(
 
     fun setPpm(value: Int) {
         ppm = value
-        val offset = -floor(value * (1 shl 24) / 1e6).toInt()
+        // librtlsdr: offs = ppm * -2^24 / 1e6 in integer arithmetic (truncated toward zero)
+        val offset = (-value.toLong() * (1L shl 24) / 1_000_000L).toInt()
         com.setDemodReg(1, 0x3e, (offset shr 8) and 0x3f, 1)
         com.setDemodReg(1, 0x3f, offset and 0xff, 1)
         tuner.xtalHz = xtal()

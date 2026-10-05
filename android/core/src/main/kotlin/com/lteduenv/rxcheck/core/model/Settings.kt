@@ -66,6 +66,11 @@ data class Settings(
     val dcShift: Boolean = false,
     /** Also show channel power with 28.8 MHz harmonics / recorded internal spurs replaced (raw stays primary). */
     val internalCorrection: Boolean = false,
+    /**
+     * Frequency correction of the dongle's crystal, ppm (positive = crystal runs
+     * fast). Dongles without a TCXO can be tens of ppm off.
+     */
+    val ppm: Int = 0,
     /** Show the waterfall (time/frequency history) under the spectrum. Display only. */
     val waterfall: Boolean = false,
     val refLevelDb: Double = -20.0,
@@ -86,6 +91,7 @@ data class Settings(
         averages !in 1..256 -> "평균 횟수: 1–256"
         gainStep != null && gainStep !in 0..MAX_GAIN_STEP -> "이득 단계: 0–15"
         settleMs !in 0..100 -> "안정화 대기: 0–100 ms"
+        ppm !in -200..200 -> "주파수 보정: -200–200 ppm"
         channelBwMhz !in 0.01..60.0 -> "채널 대역폭: 0.01–60 MHz"
         dbPerDiv !in 1.0..20.0 -> "dB/div 범위: 1–20"
         else -> null
@@ -105,6 +111,13 @@ data class Settings(
                 maxHold = true, thresholdDb = 10.0, channelPower = false)
         }
     }
+
+    /**
+     * ppm that makes a signal shown at [shownHz] read [actualHz] (from the
+     * current correction). A fast crystal shows signals low, by f * ppm.
+     */
+    fun ppmFor(shownHz: Double, actualHz: Double): Int =
+        ppm + Math.round((actualHz - shownHz) / actualHz * 1e6).toInt()
 
     /** RBW the sweep actually uses (Hann -3 dB width of the chosen FFT bin), Hz. */
     fun rbwActualHz(sampleRate: Int = SAMPLE_RATE) = 1.44 * sampleRate / SweepPlan.fftSizeFor(rbwKhz * 1e3, sampleRate)

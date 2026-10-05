@@ -63,11 +63,12 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
     var iqMean by remember { mutableStateOf(current.iqMeanRemoval) }
     var dcShift by remember { mutableStateOf(current.dcShift) }
     var correction by remember { mutableStateOf(current.internalCorrection) }
+    var ppm by remember { mutableStateOf(current.ppm.toString()) }
     var error by remember { mutableStateOf<String?>(null) }
 
     fun build(): Settings? {
         val nums = listOf(center, span, chBw, rbw, offset, threshold, ref, div).map { it.trim().toDoubleOrNull() }
-        val a = avg.trim().toIntOrNull(); val st = settle.trim().toIntOrNull()
+        val a = avg.trim().toIntOrNull(); val st = settle.trim().toIntOrNull(); val pp = ppm.trim().toIntOrNull()
         // VBW 0 (or empty) = AUTO: the averaging count below is used as is.
         val vb = vbw.trim().takeIf { it.isNotEmpty() && !it.equals("AUTO", ignoreCase = true) }
         val vbv = vb?.toDoubleOrNull()?.takeIf { it > 0 }
@@ -75,9 +76,9 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
         // Name the field that does not parse (VBW 0 = AUTO is valid, see above).
         val names = listOf("Center", "Span", "채널 BW", "RBW", "Offset", "임계", "Ref Level", "dB/div")
         val bad = names.filterIndexed { i, _ -> nums[i] == null } +
-            listOfNotNull(if (a == null) "평균" else null, if (st == null) "안정화 대기" else null)
+            listOfNotNull(if (a == null) "평균" else null, if (st == null) "안정화 대기" else null, if (pp == null) "주파수 보정" else null)
         if (bad.isNotEmpty()) { error = "숫자 입력을 확인하세요: ${bad.joinToString(", ")}"; return null }
-        if (a == null || st == null) return null
+        if (a == null || st == null || pp == null) return null
         val v = nums.map { it!! }
         return current.copy(
             band = band?.takeIf { it.rxCenterMhz * 1e6 in (v[0] - v[1] / 2) * 1e6..(v[0] + v[1] / 2) * 1e6 },
@@ -85,7 +86,7 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
             offsetDb = v[4], thresholdDb = v[5], refLevelDb = v[6], dbPerDiv = v[7],
             gainStep = if (agc) null else gain.roundToInt(), fastTune = fast, narrowIf = narrowIf,
             settleMs = st, channelPower = chPower, dcPatch = dc,
-            iqMeanRemoval = iqMean, dcShift = dcShift, internalCorrection = correction,
+            iqMeanRemoval = iqMean, dcShift = dcShift, internalCorrection = correction, ppm = pp,
         )
     }
 
@@ -210,6 +211,9 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
                             Row(verticalAlignment = Alignment.CenterVertically) { Switch(fast, { fast = it }); Text("  고속 동조") }
                             Text("켜기: I2C 리피터 유지, 바뀐 레지스터만, PLL 레지스터 묶음 전송(구간당 USB 제어 약 9회). 끄기: 참고 드라이버 순서. 레벨이 다르게 보이면 끄고 비교하세요.",
                                 fontSize = 11.sp, color = Dim)
+                            Field("주파수 보정 (ppm, -200~200)", ppm, { ppm = it })
+                            Text("TCXO가 없는 동글(V3 계열·일반 동글)은 수십 ppm 틀릴 수 있습니다(1745 MHz에서 30 ppm = 52 kHz). " +
+                                "주파수를 정확히 아는 신호에 마커를 놓고 메뉴 '마커로 주파수 보정'을 쓰면 자동으로 계산합니다.", fontSize = 11.sp, color = Dim)
                             Field("안정화 대기 (ms, PLL 잠금 후)", settle, { settle = it })
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 listOf(0, 2, 5, 10).forEach { v ->

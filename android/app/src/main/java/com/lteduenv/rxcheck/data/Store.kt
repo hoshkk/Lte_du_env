@@ -59,6 +59,7 @@ class Store(context: Context) {
                 dcShift = prefs.getBoolean(p + "dcshift", d.dcShift),
                 internalCorrection = prefs.getBoolean(p + "corr", d.internalCorrection),
                 waterfall = prefs.getBoolean(p + "wf", d.waterfall),
+                ppm = prefs.getInt(p + "ppm", d.ppm),
                 refLevelDb = prefs.double(p + "ref", d.refLevelDb),
                 dbPerDiv = prefs.double(p + "div", d.dbPerDiv),
             ).takeIf { it.validate() == null }
@@ -76,7 +77,7 @@ class Store(context: Context) {
             .putBoolean(p + "narrowif", s.narrowIf).putInt(p + "settle", s.settleMs)
             .putBoolean(p + "chpow", s.channelPower).putBoolean(p + "dc", s.dcPatch)
             .putBoolean(p + "iqmean", s.iqMeanRemoval).putBoolean(p + "dcshift", s.dcShift)
-            .putBoolean(p + "corr", s.internalCorrection).putBoolean(p + "wf", s.waterfall)
+            .putBoolean(p + "corr", s.internalCorrection).putBoolean(p + "wf", s.waterfall).putInt(p + "ppm", s.ppm)
             .putString(p + "ref", s.refLevelDb.toString()).putString(p + "div", s.dbPerDiv.toString())
             .apply()
     }

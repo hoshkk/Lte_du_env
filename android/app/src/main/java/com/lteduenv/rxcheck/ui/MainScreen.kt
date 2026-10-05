@@ -88,11 +88,12 @@ fun MainScreen(state: UiState, vm: MeasureViewModel, onSaveCsv: () -> Unit, onSh
     var showSettings by remember { mutableStateOf(false) }
     var showPresets by remember { mutableStateOf(false) }
     var showDiag by remember { mutableStateOf(false) }
+    var showCalib by remember { mutableStateOf(false) }
     var showPanel by rememberSaveable { mutableStateOf(true) }
     val s = state.settings
 
     Column(Modifier.fillMaxSize().background(ChartColors.background).padding(horizontal = 6.dp, vertical = 4.dp)) {
-        TopBar(state, vm, onSettings = { showSettings = true }, onPresets = { showPresets = true }, onDiag = { showDiag = true },
+        TopBar(state, vm, onSettings = { showSettings = true }, onPresets = { showPresets = true }, onDiag = { showDiag = true }, onCalib = { showCalib = true },
             onSaveCsv = onSaveCsv, onShareCsv = onShareCsv)
         InfoLine(state)
         BoxWithConstraints(Modifier.fillMaxWidth().weight(1f).padding(top = 2.dp)) {
@@ -125,6 +126,7 @@ fun MainScreen(state: UiState, vm: MeasureViewModel, onSaveCsv: () -> Unit, onSh
     })
     if (showPresets) PresetDialog(state, vm) { showPresets = false }
     if (showDiag) DiagDialog(state, vm) { showDiag = false }
+    if (showCalib) CalibDialog(state, vm) { showCalib = false }
     SniffBeeper(state)
     state.error?.let { msg ->
         AlertDialog(onDismissRequest = vm::dismissError, confirmButton = { TextButton(onClick = vm::dismissError) { Text("확인") } },
@@ -137,7 +139,8 @@ fun MainScreen(state: UiState, vm: MeasureViewModel, onSaveCsv: () -> Unit, onSh
 @Composable
 private fun TopBar(
     state: UiState, vm: MeasureViewModel,
-    onSettings: () -> Unit, onPresets: () -> Unit, onDiag: () -> Unit, onSaveCsv: () -> Unit, onShareCsv: () -> Unit,
+    onSettings: () -> Unit, onPresets: () -> Unit, onDiag: () -> Unit, onCalib: () -> Unit,
+    onSaveCsv: () -> Unit, onShareCsv: () -> Unit,
 ) {
     val s = state.settings
     var menu by remember { mutableStateOf(false) }
@@ -170,6 +173,7 @@ private fun TopBar(
                 MenuItem("CSV 공유 (카톡 등)", state.last != null, close, onShareCsv)
                 MenuItem("빠른 설정 저장/불러오기", true, close, onPresets)
                 MenuItem("자가점검 · 속도 진단", true, close, onDiag)
+                MenuItem("마커로 주파수 보정 (ppm)", true, close, onCalib)
                 MenuItem("B8 하향(DL) 954.3 MHz 보기 (기지국 송신 확인)", true, close, vm::showB8Downlink)
                 MenuItem(if (state.sniff) "근접 탐색 끄기 (이전 설정으로)" else "근접 탐색 (커넥터에 대고 찾기)", true, close, vm::toggleSniff)
                 HorizontalDivider()
@@ -623,3 +627,40 @@ private fun DiagDialog(state: UiState, vm: MeasureViewModel, onDismiss: () -> Un
         },
     )
 }
+
+// ---- frequency calibration --------------------------------------------------------
+
+@Composable
+private fun CalibDialog(state: UiState, vm: MeasureViewModel, onDismiss: () -> Unit) {
+    val s = state.settings
+    val m = state.markers.firstOrNull { it.index == state.selectedMarker }?.freqHz
+    var actual by remember { mutableStateOf(m?.let { (it / 1e6).f(4) } ?: "") }
+    var msg by remember { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = {
+                val v = actual.trim().toDoubleOrNull()
+                msg = if (v == null) "숫자를 입력하세요" else vm.calibrateFromMarker(v)
+                if (msg == null) onDismiss()
+            }) { Text("보정 적용") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+        title = { Text("마커로 주파수 보정") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("현재 보정: ${if (s.ppm > 0) "+" else ""}${s.ppm} ppm", fontSize = 13.sp)
+                Text("M${state.selectedMarker} 위치: " + (m?.let { "${(it / 1e6).f(4)} MHz" } ?: "없음 (그래프를 탭하거나 Peak)"), fontSize = 13.sp)
+                androidx.compose.material3.OutlinedTextField(actual, { actual = it }, singleLine = true,
+                    label = { Text("그 신호의 실제 주파수 (MHz)") })
+                Text("1. 주파수를 정확히 아는 신호(협대역 기준 신호, 알려진 캐리어 등)를 띄웁니다.\n" +
+                    "2. 그래프를 길게 눌러 확대하고, 마커를 봉우리에 놓습니다(Peak).\n" +
+                    "3. 실제 주파수를 넣고 보정 적용.\n" +
+                    "넓은 LTE 신호의 가운데는 정확하지 않으니 피하세요. 28.8 MHz 배수(921.6 등)는 동글 자체 신호라 보정에 쓸 수 없습니다.",
+                    color = Dim, fontSize = 11.sp)
+                msg?.let { Text(it, color = Bad, fontSize = 12.sp) }
+            }
+        },
+    )
+}
+
