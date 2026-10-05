@@ -242,7 +242,10 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
                     }
                 }
                 error?.let { Text(it, color = Bad, fontSize = 12.sp) }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                    val ctx = androidx.compose.ui.platform.LocalContext.current
+                    val ver = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() }
+                    Text("앱 버전 ${ver ?: "?"}", fontSize = 11.sp, color = Dim, modifier = Modifier.weight(1f))
                     TextButton(onClick = onDismiss) { Text("취소") }
                     Button(onClick = { build()?.let { error = onApply(it) } }) { Text("적용") }
                 }

@@ -3,6 +3,11 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val appVersion = "1.8.2"
+
+// APK file named with the version (RxCheck-1.8.2-debug.apk) so an old download is not installed by mistake.
+base { archivesName.set("RxCheck-$appVersion") }
+
 android {
     namespace = "com.lteduenv.rxcheck"
     compileSdk = 34
@@ -11,8 +16,8 @@ android {
         applicationId = "com.lteduenv.rxcheck"
         minSdk = 26
         targetSdk = 34
-        versionCode = 22
-        versionName = "1.8.1"
+        versionCode = 23
+        versionName = appVersion
     }
 
     // A fixed debug key so every CI build has the same signature and installs as
