@@ -11,11 +11,26 @@ android {
         applicationId = "com.lteduenv.rxcheck"
         minSdk = 26
         targetSdk = 34
-        versionCode = 21
-        versionName = "1.8.0"
+        versionCode = 22
+        versionName = "1.8.1"
+    }
+
+    // A fixed debug key so every CI build has the same signature and installs as
+    // an update over the previous one (a fresh runner would otherwise make a new key).
+    // Debug-only key, not a secret.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
