@@ -3,7 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-val appVersion = "1.9.0"
+val appVersion = "1.10.0"
 
 // APK file named with the version (RxCheck-1.8.2-debug.apk) so an old download is not installed by mistake.
 base { archivesName.set("RxCheck-$appVersion") }
@@ -16,7 +16,7 @@ android {
         applicationId = "com.lteduenv.rxcheck"
         minSdk = 26
         targetSdk = 34
-        versionCode = 25
+        versionCode = 26
         versionName = appVersion
     }
 

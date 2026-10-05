@@ -89,12 +89,13 @@ fun MainScreen(state: UiState, vm: MeasureViewModel, onSaveCsv: () -> Unit, onSh
     var showPresets by remember { mutableStateOf(false) }
     var showDiag by remember { mutableStateOf(false) }
     var showCalib by remember { mutableStateOf(false) }
+    var showLteCalib by remember { mutableStateOf(false) }
     var showPanel by rememberSaveable { mutableStateOf(true) }
     val s = state.settings
 
     Column(Modifier.fillMaxSize().background(ChartColors.background).padding(horizontal = 6.dp, vertical = 4.dp)) {
         TopBar(state, vm, onSettings = { showSettings = true }, onPresets = { showPresets = true }, onDiag = { showDiag = true }, onCalib = { showCalib = true },
-            onSaveCsv = onSaveCsv, onShareCsv = onShareCsv)
+            onLteCalib = { showLteCalib = true }, onSaveCsv = onSaveCsv, onShareCsv = onShareCsv)
         InfoLine(state)
         BoxWithConstraints(Modifier.fillMaxWidth().weight(1f).padding(top = 2.dp)) {
             val wide = maxWidth > maxHeight
@@ -127,6 +128,7 @@ fun MainScreen(state: UiState, vm: MeasureViewModel, onSaveCsv: () -> Unit, onSh
     if (showPresets) PresetDialog(state, vm) { showPresets = false }
     if (showDiag) DiagDialog(state, vm) { showDiag = false }
     if (showCalib) CalibDialog(state, vm) { showCalib = false }
+    if (showLteCalib) LteCalibDialog(state, vm) { showLteCalib = false }
     SniffBeeper(state)
     state.error?.let { msg ->
         AlertDialog(onDismissRequest = vm::dismissError, confirmButton = { TextButton(onClick = vm::dismissError) { Text("확인") } },
@@ -139,7 +141,7 @@ fun MainScreen(state: UiState, vm: MeasureViewModel, onSaveCsv: () -> Unit, onSh
 @Composable
 private fun TopBar(
     state: UiState, vm: MeasureViewModel,
-    onSettings: () -> Unit, onPresets: () -> Unit, onDiag: () -> Unit, onCalib: () -> Unit,
+    onSettings: () -> Unit, onPresets: () -> Unit, onDiag: () -> Unit, onCalib: () -> Unit, onLteCalib: () -> Unit,
     onSaveCsv: () -> Unit, onShareCsv: () -> Unit,
 ) {
     val s = state.settings
@@ -173,6 +175,7 @@ private fun TopBar(
                 MenuItem("CSV 공유 (카톡 등)", state.last != null, close, onShareCsv)
                 MenuItem("빠른 설정 저장/불러오기", true, close, onPresets)
                 MenuItem("자가점검 · 속도 진단", true, close, onDiag)
+                MenuItem("자동 주파수 보정 (LTE B8 하향 신호)", true, close, onLteCalib)
                 MenuItem("마커로 주파수 보정 (ppm)", true, close, onCalib)
                 MenuItem("B8 하향(DL) 954.3 MHz 보기 (기지국 송신 확인)", true, close, vm::showB8Downlink)
                 MenuItem("B3 하향(DL) 보기 (실험 · 하모닉 수신)", true, close, vm::showB3Downlink)
@@ -667,3 +670,44 @@ private fun CalibDialog(state: UiState, vm: MeasureViewModel, onDismiss: () -> U
     )
 }
 
+// ---- automatic frequency calibration on LTE ----------------------------------------
+
+@Composable
+private fun LteCalibDialog(state: UiState, vm: MeasureViewModel, onDismiss: () -> Unit) {
+    val s = state.settings
+    val d = state.diag
+    var dl by remember { mutableStateOf("954.3") }
+    var msg by remember { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(enabled = d.busy == null, onClick = {
+                val v = dl.trim().toDoubleOrNull()
+                msg = if (v == null) "숫자를 입력하세요" else vm.requestLteCalibration(v)
+            }) { Text(if (d.lte == null) "측정 · 자동 적용" else "다시 측정") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
+        title = { Text("자동 주파수 보정 (LTE)") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("현재 보정: ${if (s.ppm > 0) "+" else ""}${s.ppm} ppm", fontSize = 13.sp)
+                androidx.compose.material3.OutlinedTextField(dl, { dl = it }, singleLine = true,
+                    label = { Text("LTE 하향(DL) 중심 주파수 (MHz)") })
+                Text("기지국 하향 신호는 GPS로 맞춰져 있어 동글 수정보다 훨씬 정확합니다. " +
+                    "그 신호의 동기 신호(PSS)를 찾아 동글 주파수 오차를 재고 ppm에 바로 넣습니다.\n" +
+                    "• KT B8 하향 954.3 MHz (B8 RX 909.3 + 45). 실내에서도 보통 잡힙니다.\n" +
+                    "• 측정 중(▶)에만 동작 · 약 1초.\n" +
+                    "• B3 하향(1.8 GHz대)은 하모닉 수신이라 쓸 수 없습니다. B8로 맞추면 동글 전체에 적용됩니다.\n" +
+                    "• 동글이 데워지면 수 ppm 변할 수 있으니 10분쯤 켜 둔 뒤 하는 게 좋습니다.",
+                    color = Dim, fontSize = 11.sp)
+                d.busy?.let { Text(it, color = Warn, fontSize = 13.sp) }
+                d.lte?.let { r ->
+                    Text(if (r.ok) "✓ " + r.message else "✗ " + r.message, color = if (r.ok) Good else Bad, fontSize = 13.sp)
+                    if (r.clippedFraction > 1e-3) Text("입력이 커서 클리핑됨 · Gain을 낮추고 다시 해 보세요", color = Warn, fontSize = 11.sp)
+                    if (d.demo) Text("데모 모드 결과입니다 (실제 동글 아님 · 적용 안 함)", color = Warn, fontSize = 11.sp)
+                }
+                (msg ?: d.error)?.let { Text(it, color = Bad, fontSize = 12.sp) }
+            }
+        },
+    )
+}

@@ -9,6 +9,7 @@ import com.lteduenv.rxcheck.core.analysis.Evaluate
 import com.lteduenv.rxcheck.core.analysis.GainLadder
 import com.lteduenv.rxcheck.core.analysis.Results
 import com.lteduenv.rxcheck.core.diag.Check
+import com.lteduenv.rxcheck.core.diag.LteCalibration
 import com.lteduenv.rxcheck.core.diag.SelfTest
 import com.lteduenv.rxcheck.core.diag.SettleProbe
 import com.lteduenv.rxcheck.core.view.Waterfall
@@ -61,6 +62,8 @@ data class DiagState(
     val busy: String? = null,
     val checks: List<Check>? = null,
     val settle: SettleProbe.Result? = null,
+    /** Last automatic frequency calibration on an LTE downlink. */
+    val lte: LteCalibration.Outcome? = null,
     val error: String? = null,
     /** Results came from the demo simulator, not a dongle. */
     val demo: Boolean = false,
@@ -145,6 +148,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 1 = self-test, 2 = settle probe; picked up by the measurement loop. */
     @Volatile private var diagRequest = 0
+    @Volatile private var lteTuneHz = 954_300_000L
 
     /** Auto-fit progress, touched only by the measurement coroutine and [autoFit]. */
     @Volatile private var autoFitRequested = false
@@ -420,6 +424,20 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
                     val r = SettleProbe.run(rx, p, engine.discardSamples, setGain, s.gainStep)
                     _state.update { it.copy(diag = it.diag.copy(busy = null, settle = r, error = null, demo = demo)) }
                 }
+                3 -> {
+                    val r = try {
+                        LteCalibration.run(rx, lteTuneHz, s.ppm, setGain, s.gainStep)
+                    } finally {
+                        setGain?.invoke(s.gainStep)
+                    }
+                    val ppm = r.newPpm
+                    if (r.ok && ppm != null && !demo) {
+                        // Applied on the next loop pass (setPpm + retune), like a settings change.
+                        commit(_state.value.settings.copy(ppm = ppm), clearTraces = true)
+                        _state.update { it.copy(status = "LTE 자동 주파수 보정 ${if (ppm > 0) "+" else ""}$ppm ppm 적용") }
+                    }
+                    _state.update { it.copy(diag = it.diag.copy(busy = null, lte = r, error = null, demo = demo)) }
+                }
             }
         } catch (e: IOException) {
             throw e
@@ -432,6 +450,19 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
 
     fun requestSelfTest() = requestDiag(1, "자가점검 중…")
     fun requestSettleProbe() = requestDiag(2, "전환 안정 시간 측정 중…")
+
+    /**
+     * Measures the crystal error on the LTE downlink carrier centred at [dlMhz]
+     * and applies it as the ppm correction. Returns an error text, or null.
+     */
+    fun requestLteCalibration(dlMhz: Double): String? {
+        if (!dlMhz.isFinite() || dlMhz !in 400.0..Settings.DIRECT_MAX_MHZ)
+            return "하향 중심 주파수(MHz, 400–1766)를 확인하세요 · 1766 MHz 넘는 하모닉 구간은 쓸 수 없습니다"
+        lteTuneHz = Math.round(dlMhz * 1e6)
+        _state.update { it.copy(diag = it.diag.copy(lte = null)) }
+        requestDiag(3, "LTE 신호로 주파수 보정 중…")
+        return null
+    }
 
     private fun requestDiag(kind: Int, label: String) {
         if (!_state.value.running) {
