@@ -68,8 +68,16 @@ object SelfTest {
             setGain(15); val hi = floorDb()
             setGain(restoreGain)
             val d = hi - lo
-            out += Check("Gain 반응 (0→15 잡음 바닥)", f("%+.1f dB", d), d >= 6,
-                if (d < 6) "이득을 올려도 잡음이 거의 안 변함 · 앞단(LNA) 이상 가능" else "")
+            // Above ~1.4 GHz R820T/R860 tuners have little RF gain left, so their own
+            // noise sets the floor and a small rise is normal there (not a fault).
+            val high = centerHz > 1_400_000_000L
+            val limit = if (high) 1.5 else 6.0
+            out += Check("Gain 반응 (0→15 잡음 바닥)", f("%+.1f dB", d), d >= limit,
+                when {
+                    d < limit -> "이득을 올려도 잡음이 거의 안 변함 · 앞단(LNA) 이상 가능"
+                    high && d < 6 -> "1.4 GHz 이상에서는 튜너 자체 잡음이 커서 작게 나오는 것이 보통입니다 (감도 한계)"
+                    else -> ""
+                })
         }
         return out
     }
