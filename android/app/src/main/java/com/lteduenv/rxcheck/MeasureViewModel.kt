@@ -425,11 +425,23 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
                     _state.update { it.copy(diag = it.diag.copy(busy = null, settle = r, error = null, demo = demo)) }
                 }
                 3 -> {
-                    val r = try {
-                        LteCalibration.run(rx, lteTuneHz, s.ppm, setGain, s.gainStep)
+                    // Find the LTE block's centre in a 20 MHz sweep first: the PSS is only
+                    // at the carrier centre, and the operator's exact channel may differ
+                    // from the number typed in.
+                    val near = lteTuneHz
+                    val found = engine.sweep(SweepPlan.create(near.toDouble(), 20e6, 27e3, rx.sampleRate, false), 8,
+                        dcPatch = true, removeMean = true)?.let { t ->
+                        LteCalibration.findCarrier(DoubleArray(t.levelsDb.size) { t.freqAt(it) }, t.levelsDb, near.toDouble())
+                    }
+                    val tuned = found ?: near
+                    val where = if (found != null) "하향 블록 중심 %.1f MHz (스펙트럼에서 찾음) · ".format(found / 1e6)
+                        else "스펙트럼에서 LTE 블록을 못 찾아 입력값 %.1f MHz 사용 · ".format(near / 1e6)
+                    val raw = try {
+                        LteCalibration.run(rx, tuned, s.ppm, setGain, s.gainStep)
                     } finally {
                         setGain?.invoke(s.gainStep)
                     }
+                    val r = raw.copy(message = where + raw.message)
                     val ppm = r.newPpm
                     if (r.ok && ppm != null && !demo) {
                         // Applied on the next loop pass (setPpm + retune), like a settings change.

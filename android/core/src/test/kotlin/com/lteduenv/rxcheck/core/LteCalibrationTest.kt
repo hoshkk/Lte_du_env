@@ -2,7 +2,6 @@ package com.lteduenv.rxcheck.core
 
 import com.lteduenv.rxcheck.core.diag.LteCalibration
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.PI
@@ -18,7 +17,7 @@ class LteCalibrationTest {
      * +-1..+-72, PSS (root of [nid2]) in the last symbol of slots 0 and 10,
      * a frequency offset of [offsetHz], white noise at [snrDb], and a random start.
      */
-    private fun lte(offsetHz: Double, nid2: Int, snrDb: Double, seed: Int): FloatArray {
+    private fun lte(offsetHz: Double, nid2: Int, snrDb: Double, seed: Int, dc: Float = 0f): FloatArray {
         val rnd = Random(seed)
         val cp = intArrayOf(13, 11, 11, 11, 11, 12, 11)
         val n = LteCalibration.LEN
@@ -75,8 +74,8 @@ class LteCalibrationTest {
             val ph = 2 * PI * offsetHz * i / LteCalibration.FS
             val c = cos(ph); val s = sin(ph)
             val a = sig[2 * j] + noise * rnd.nextGaussian(); val b = sig[2 * j + 1] + noise * rnd.nextGaussian()
-            out[2 * i] = ((a * c - b * s) * scale).toFloat()
-            out[2 * i + 1] = ((a * s + b * c) * scale).toFloat()
+            out[2 * i] = ((a * c - b * s) * scale).toFloat() + dc
+            out[2 * i + 1] = ((a * s + b * c) * scale).toFloat() - dc / 2
         }
         return out
     }
@@ -91,7 +90,7 @@ class LteCalibrationTest {
         // Crystal +23 ppm fast, nothing applied: the carrier shows 23 ppm low.
         val off = -23e-6 * tuned
         val est = LteCalibration.estimate(lte(off, nid2 = 1, snrDb = 5.0, seed = 1))
-        assertNotNull(est); est!!
+        assertTrue(est.found)
         assertEquals(1, est.nid2)
         assertTrue(est.repeats)
         assertEquals(off, est.offsetHz, 50.0)
@@ -105,7 +104,7 @@ class LteCalibrationTest {
         // Carrier really at 954.4 MHz, crystal -12 ppm, +5 ppm already applied: residual -17 ppm.
         val off = 100_000.0 + 17e-6 * tuned
         val est = LteCalibration.estimate(lte(off, nid2 = 2, snrDb = 10.0, seed = 2))
-        assertNotNull(est); est!!
+        assertTrue(est.found)
         assertEquals(2, est.nid2)
         assertEquals(off, est.offsetHz, 50.0)
         val c = LteCalibration.correction(est.offsetHz, tuned, 5)
@@ -116,7 +115,7 @@ class LteCalibrationTest {
     @Test fun fractionalOffsetNearSubcarrierEdge() {
         val off = 7_400.0 // close to the +-7.5 kHz CP ambiguity edge
         val est = LteCalibration.estimate(lte(off, nid2 = 0, snrDb = 10.0, seed = 3))
-        assertNotNull(est); est!!
+        assertTrue(est.found)
         assertEquals(off, est.offsetHz, 50.0)
     }
 
@@ -125,7 +124,7 @@ class LteCalibrationTest {
         for (seed in 10 until 15) {
             val off = -31_000.0 + seed * 1_000
             val est = LteCalibration.estimate(lte(off, nid2 = seed % 3, snrDb = -3.0, seed = seed))
-            assertNotNull("seed $seed", est); est!!
+            assertTrue("seed $seed", est.found)
             assertTrue(est.repeats)
             assertEquals(seed % 3, est.nid2)
             // 300 Hz = 0.3 ppm at 954 MHz, inside the 0.5 ppm rounding to whole ppm.
@@ -133,10 +132,34 @@ class LteCalibrationTest {
         }
     }
 
+    /** The dongle's DC offset (here stronger than the cell) must not pull the estimate to 0 Hz. */
+    @Test fun dcOffsetIgnored() {
+        val off = -4_100.0
+        val est = LteCalibration.estimate(lte(off, nid2 = 1, snrDb = 3.0, seed = 21, dc = 0.4f))
+        assertTrue(est.found && est.repeats)
+        assertEquals(off, est.offsetHz, 300.0)
+    }
+
+    /** LTE-like block (10 dB-plus plateau, 9 MHz wide) found and its centre put on the 100 kHz raster. */
+    @Test fun carrierCentreFromSpectrum() {
+        val n = 741
+        val f = DoubleArray(n) { 944.3e6 + it * 27_000.0 }
+        val rnd = Random(5)
+        val lv = FloatArray(n) { i ->
+            val inBlock = f[i] in 949.8e6..958.8e6 // 954.3 +- 4.5 MHz, read 0.02 MHz high
+            ((if (inBlock) -55.0 else -80.0) + 3 * rnd.nextGaussian()).toFloat()
+        }
+        assertEquals(954_300_000L, LteCalibration.findCarrier(f, lv, 955.0e6))
+        // Flat noise: nothing to lock onto.
+        val flat = FloatArray(n) { (-80.0 + 3 * rnd.nextGaussian()).toFloat() }
+        assertEquals(null, LteCalibration.findCarrier(f, flat, 954.3e6))
+    }
+
     @Test fun noiseIsNotLte() {
         val rnd = Random(4)
         val iq = FloatArray(2 * LteCalibration.LEN) { (rnd.nextGaussian() * 0.1).toFloat() }
         val est = LteCalibration.estimate(iq)
-        assertTrue(est == null || !est.repeats)
+        println("LTE noise pss=${est.pssDb} hits=${est.hits}")
+        assertTrue(!est.found || !est.repeats)
     }
 }

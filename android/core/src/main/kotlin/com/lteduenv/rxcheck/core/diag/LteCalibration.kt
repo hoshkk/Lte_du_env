@@ -59,6 +59,8 @@ object LteCalibration {
         /** Periods (of [FOLDS]) in which the PSS stood out on its own. */
         val hits: Int,
     ) {
+        /** The strongest candidate stands out enough to be a PSS. */
+        val found get() = pssDb >= 10 * log10(MIN_PSS_METRIC)
         /** The PSS repeated every 5 ms, as a real cell does. */
         val repeats get() = hits >= MIN_HITS
     }
@@ -129,16 +131,25 @@ object LteCalibration {
         return atan2(im, re) * FS / (2 * PI * SYMBOL)
     }
 
+    /** Frequency hypotheses are tried every 3.75 kHz (worst miss 1.9 kHz, about 0.2 dB loss over a symbol). */
+    const val SEARCH_STEP_HZ = 3_750.0
+
     /**
-     * Full estimate on [iq] (interleaved, at least [LEN] samples, 2.4 MS/s), or
-     * null when no PSS stands out.
+     * Full estimate on [iq] (interleaved, at least [LEN] samples, 2.4 MS/s). The
+     * strongest PSS candidate is always returned; [Estimate.found] says whether
+     * it stands out enough to be a cell.
      */
-    fun estimate(iq: FloatArray): Estimate? {
+    fun estimate(iq: FloatArray): Estimate {
         require(iq.size >= 2 * LEN)
-        val frac = cpOffsetHz(iq, LEN)
+        // The dongle's own DC offset sits right on the carrier centre: remove it so it
+        // neither biases the prefix phase nor the correlation.
+        var mi = 0.0; var mq = 0.0
+        for (i in 0 until LEN) { mi += iq[2 * i]; mq += iq[2 * i + 1] }
+        mi /= LEN; mq /= LEN
+        val x = FloatArray(2 * LEN) { if (it % 2 == 0) (iq[it] - mi).toFloat() else (iq[it] - mq).toFloat() }
         val fft = Fft(LEN)
         val rRe = FloatArray(LEN); val rIm = FloatArray(LEN)
-        for (i in 0 until LEN) { rRe[i] = iq[2 * i]; rIm[i] = iq[2 * i + 1] }
+        for (i in 0 until LEN) { rRe[i] = x[2 * i]; rIm[i] = x[2 * i + 1] }
         fft.transform(rRe, rIm)
         val binHz = FS.toDouble() / LEN
         // PSS spectra (conjugated later); only bins within the PSS bandwidth matter.
@@ -152,13 +163,12 @@ object LteCalibration {
         }
         val xr = FloatArray(LEN); val xi = FloatArray(LEN)
         val fold = DoubleArray(PSS_PERIOD)
-        var best: Triple<Double, Int, Int>? = null // metric, k, root index
+        var bestMetric = 0.0; var bestOff = 0.0; var bestRoot = 0
         var bestPeak = 0
-        var bestCorr: FloatArray? = null
-        val kMax = (SEARCH_HZ / SUBCARRIER_HZ).toInt() + 1
-        for (k in -kMax..kMax) {
-            val off = frac + k * SUBCARRIER_HZ
-            if (abs(off) > SEARCH_HZ) continue
+        val bestCorr = FloatArray(LEN)
+        val steps = (SEARCH_HZ / SEARCH_STEP_HZ).toInt()
+        for (k in -steps..steps) {
+            val off = k * SEARCH_STEP_HZ
             val shift = (off / binHz).roundToInt()
             for ((ri, tp) in templates.withIndex()) {
                 xr.fill(0f); xi.fill(0f)
@@ -182,34 +192,71 @@ object LteCalibration {
                 var peak = 0; var pmax = 0.0; var sum = 0.0
                 for (i in 0 until PSS_PERIOD) { val p = fold[i]; sum += p; if (p > pmax) { pmax = p; peak = i } }
                 val metric = pmax / (sum / PSS_PERIOD)
-                if (best == null || metric > best.first) {
-                    best = Triple(metric, k, ri); bestPeak = peak
-                    bestCorr = FloatArray(LEN) { i -> xr[i] * xr[i] + xi[i] * xi[i] }
+                if (metric > bestMetric) {
+                    bestMetric = metric; bestOff = off; bestRoot = ri; bestPeak = peak
+                    for (i in 0 until LEN) bestCorr[i] = xr[i] * xr[i] + xi[i] * xi[i]
                 }
             }
         }
-        val b = best ?: return null
-        if (b.first < MIN_PSS_METRIC) return null
-        val corr = bestCorr!!
         // Each period on its own: the peak (within +-2 samples, for sample-clock
         // drift) against that period's mean.
         var hits = 0
         for (j in 0 until FOLDS) {
             val o = j * PSS_PERIOD
             var mean = 0.0
-            for (i in 0 until PSS_PERIOD) mean += corr[o + i]
+            for (i in 0 until PSS_PERIOD) mean += bestCorr[o + i]
             mean /= PSS_PERIOD
             var m = 0f
-            for (d in -2..2) m = maxOf(m, corr[o + ((bestPeak + d) % PSS_PERIOD + PSS_PERIOD) % PSS_PERIOD])
+            for (d in -2..2) m = maxOf(m, bestCorr[o + ((bestPeak + d) % PSS_PERIOD + PSS_PERIOD) % PSS_PERIOD])
             if (m > HIT_METRIC * mean) hits++
         }
-        val coarse = frac + b.second * SUBCARRIER_HZ
-        // With the symbol timing known from the PSS, redo the cyclic-prefix phase on
-        // the prefix samples only (the rest only adds noise), then keep the integer
-        // number of subcarriers found above.
-        val fine = cpOffsetHz(iq, LEN, bestPeak - PSS_USEFUL_START)
-        val total = fine + SUBCARRIER_HZ * Math.round((coarse - fine) / SUBCARRIER_HZ)
-        return Estimate(total, b.third, 10 * log10(b.first), hits)
+        // With the symbol timing known from the PSS, the cyclic-prefix phase on the
+        // prefix samples only gives the fine offset (within +-7.5 kHz); the coarse
+        // search (within 1.9 kHz) picks the right 15 kHz multiple.
+        val fine = cpOffsetHz(x, LEN, bestPeak - PSS_USEFUL_START)
+        val total = fine + SUBCARRIER_HZ * Math.round((bestOff - fine) / SUBCARRIER_HZ)
+        return Estimate(total, bestRoot, 10 * log10(bestMetric.coerceAtLeast(1e-9)), hits)
+    }
+
+    /**
+     * Centre of the LTE block around [nearHz] in a spectrum ([freqHz], [levelsDb]),
+     * rounded to the 100 kHz raster, or null when no clear block (>= 10 dB above
+     * the floor, 1–20 MHz wide) is there. Used to tune onto the carrier centre,
+     * where the PSS is, without knowing the operator's exact channel.
+     */
+    fun findCarrier(freqHz: DoubleArray, levelsDb: FloatArray, nearHz: Double): Long? {
+        val n = levelsDb.size
+        if (n < 10) return null
+        val step = (freqHz[n - 1] - freqHz[0]) / (n - 1)
+        // Smooth over about 300 kHz in power, so the block reads as one plateau.
+        val half = maxOf(1, (150_000 / step).toInt())
+        val sm = DoubleArray(n) { Double.NaN }
+        for (i in 0 until n) {
+            var acc = 0.0; var c = 0
+            for (j in maxOf(0, i - half)..minOf(n - 1, i + half)) {
+                val v = levelsDb[j]; if (!v.isNaN()) { acc += Math.pow(10.0, v / 10.0); c++ }
+            }
+            if (c > 0) sm[i] = 10 * log10(acc / c)
+        }
+        val valid = sm.filter { !it.isNaN() }.sorted()
+        if (valid.size < 10) return null
+        val floor = valid[(valid.size * 0.1).toInt()]
+        val top = valid[(valid.size * 0.95).toInt().coerceAtMost(valid.size - 1)]
+        if (top - floor < 10) return null
+        val thr = (floor + top) / 2
+        fun above(i: Int) = !sm[i].isNaN() && sm[i] >= thr
+        var start = (0 until n).minBy { abs(freqHz[it] - nearHz) }
+        if (!above(start)) {
+            val reach = (3_000_000 / step).toInt()
+            start = (0 until n).filter { above(it) && abs(it - start) <= reach }.minByOrNull { abs(it - start) } ?: return null
+        }
+        var lo = start; var hi = start
+        while (lo > 0 && above(lo - 1)) lo--
+        while (hi < n - 1 && above(hi + 1)) hi++
+        val width = freqHz[hi] - freqHz[lo]
+        if (width < 1_000_000 || width > 20_000_000) return null
+        val centre = (freqHz[lo] + freqHz[hi]) / 2
+        return Math.round(centre / 100_000) * 100_000
     }
 
     data class Correction(
@@ -241,33 +288,45 @@ object LteCalibration {
         val clippedFraction: Double = 0.0,
     )
 
+    /** Captures tried before giving up (a PSS can be lost to a deep fade in one). */
+    const val TRIES = 3
+
     /**
      * Tunes [rx] to [tunedHz] (an LTE downlink carrier centre), captures 27 ms and
-     * estimates. Lowers the gain once if the capture clips. The receiver must be
-     * running at 2.4 MS/s. Tuning and gain are left for the caller to restore.
+     * estimates, up to [TRIES] times. Lowers the gain once if the capture clips.
+     * The receiver must be running at 2.4 MS/s. Tuning and gain are left for the
+     * caller to restore.
      */
     fun run(rx: Receiver, tunedHz: Long, appliedPpm: Int, setGain: ((Int?) -> Unit)?, gain: Int?): Outcome {
         if (rx.sampleRate != FS) return Outcome(false, "샘플레이트가 2.4 MS/s가 아닙니다")
         val iq = FloatArray(2 * LEN)
         var g = gain
         var clip = 0.0
-        for (attempt in 0..1) {
+        var best: Estimate? = null
+        for (attempt in 0 until TRIES + 1) {
             if (!rx.tune(tunedHz)) return Outcome(false, "PLL 잠금 실패 (${tunedHz / 1e6} MHz)")
             clip = rx.capture(iq, 2048).toDouble() / iq.size
-            if (clip <= 1e-3 || setGain == null || g == null || g == 0) break
-            g = maxOf(0, g - 5); setGain(g)
+            if (clip > 1e-3 && setGain != null && g != null && g > 0 && attempt == 0) {
+                g = maxOf(0, g - 5); setGain(g); continue
+            }
+            val est = estimate(iq)
+            if (best == null || est.pssDb > best.pssDb) best = est
+            if (est.found && est.repeats) { best = est; break }
         }
-        val est = estimate(iq)
-            ?: return Outcome(false, "LTE 동기 신호(PSS)를 찾지 못했습니다 · 하향 중심 주파수와 신호 세기를 확인하세요", clippedFraction = clip)
+        val est = best!!
+        val need = 10 * log10(MIN_PSS_METRIC)
+        if (!est.found) return Outcome(false,
+            "LTE 동기 신호(PSS)를 찾지 못했습니다 (가장 비슷한 후보 %.1f dB · 기준 %.1f dB) · 하향 중심 주파수와 신호 세기를 확인하세요".format(est.pssDb, need),
+            est, clippedFraction = clip)
         if (!est.repeats) return Outcome(false,
-            "PSS 후보가 5 ms 간격으로 충분히 반복되지 않아 (${est.hits}/$FOLDS) 신뢰할 수 없습니다 · 다시 시도하세요",
+            "PSS 후보(%.1f dB)가 5 ms 간격으로 충분히 반복되지 않아 (${est.hits}/$FOLDS) 신뢰할 수 없습니다 · 다시 시도하세요".format(est.pssDb),
             est, clippedFraction = clip)
         val c = correction(est.offsetHz, tunedHz, appliedPpm)
         if (abs(c.crystalPpm) > 50) return Outcome(false,
             "계산된 오차 %.1f ppm이 너무 큽니다 (±50 ppm 넘으면 판단 불가)".format(c.crystalPpm), est, clippedFraction = clip)
         val ppm = c.crystalPpm.roundToLong().toInt()
-        return Outcome(true, "보정 %+d ppm (측정 %+.2f ppm · 오프셋 %+.0f Hz · 셀 그룹 N_ID2=%d · PSS %.0f dB%s)".format(
-            ppm, c.crystalPpm, est.offsetHz, est.nid2, est.pssDb,
+        return Outcome(true, "보정 %+d ppm (측정 %+.2f ppm · 오프셋 %+.0f Hz · N_ID2=%d · PSS %.1f dB · 반복 %d/%d%s)".format(
+            ppm, c.crystalPpm, est.offsetHz, est.nid2, est.pssDb, est.hits, FOLDS,
             if (c.rasterSteps != 0) " · 캐리어가 %+d00 kHz 옆".format(c.rasterSteps) else ""),
             est, ppm, c.crystalPpm, clip)
     }
