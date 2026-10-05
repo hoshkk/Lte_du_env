@@ -429,19 +429,31 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
                     // at the carrier centre, and the operator's exact channel may differ
                     // from the number typed in.
                     val near = lteTuneHz
-                    val found = engine.sweep(SweepPlan.create(near.toDouble(), 20e6, 27e3, rx.sampleRate, false), 8,
-                        dcPatch = true, removeMean = true)?.let { t ->
-                        LteCalibration.findCarrier(DoubleArray(t.levelsDb.size) { t.freqAt(it) }, t.levelsDb, near.toDouble())
-                    }
-                    val tuned = found ?: near
-                    val where = if (found != null) "하향 블록 중심 %.1f MHz (스펙트럼에서 찾음) · ".format(found / 1e6)
-                        else "스펙트럼에서 LTE 블록을 못 찾아 입력값 %.1f MHz 사용 · ".format(near / 1e6)
+                    val plan = SweepPlan.create(near.toDouble(), 20e6, 27e3, rx.sampleRate, false)
                     val raw = try {
-                        LteCalibration.run(rx, tuned, s.ppm, setGain, s.gainStep)
+                        // The measuring gain (often low for strong uplink work) would bury a
+                        // distant downlink: start at full gain and step down only on clipping.
+                        var g: Int? = null
+                        var trace: Trace? = null
+                        for (step in listOf(15, 10, 5, 0)) {
+                            if (setGain != null) { setGain(step); g = step }
+                            trace = engine.sweep(plan, 8, dcPatch = true, removeMean = true)
+                            if (setGain == null || trace == null || trace.clippedFraction <= 1e-3) break
+                        }
+                        val search = trace?.let { t ->
+                            LteCalibration.searchCarrier(DoubleArray(t.levelsDb.size) { t.freqAt(it) }, t.levelsDb, near.toDouble())
+                        }
+                        val found = search?.centreHz
+                        val gainText = g?.let { "Gain $it · " } ?: ""
+                        val where = if (found != null) "${gainText}하향 블록 중심 %.1f MHz (스펙트럼에서 찾음, 바닥보다 %.0f dB) · ".format(found / 1e6, search?.contrastDb ?: 0.0)
+                            else "${gainText}스펙트럼에서 LTE 블록을 못 찾음 (가장 센 곳이 바닥보다 %.0f dB · 10 dB 이상 필요) · 입력값 %.1f MHz 사용 · "
+                                .format(search?.contrastDb ?: 0.0, near / 1e6)
+                        val o = LteCalibration.run(rx, found ?: near, s.ppm, setGain, g)
+                        o.copy(message = where + o.message)
                     } finally {
                         setGain?.invoke(s.gainStep)
                     }
-                    val r = raw.copy(message = where + raw.message)
+                    val r = raw
                     val ppm = r.newPpm
                     if (r.ok && ppm != null && !demo) {
                         // Applied on the next loop pass (setPpm + retune), like a settings change.

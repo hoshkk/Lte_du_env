@@ -224,9 +224,20 @@ object LteCalibration {
      * the floor, 1–20 MHz wide) is there. Used to tune onto the carrier centre,
      * where the PSS is, without knowing the operator's exact channel.
      */
-    fun findCarrier(freqHz: DoubleArray, levelsDb: FloatArray, nearHz: Double): Long? {
+    fun findCarrier(freqHz: DoubleArray, levelsDb: FloatArray, nearHz: Double): Long? =
+        searchCarrier(freqHz, levelsDb, nearHz).centreHz
+
+    data class CarrierSearch(
+        val centreHz: Long?,
+        /** Top of the spectrum over its floor (95th over 10th percentile, ~300 kHz smoothed), dB. */
+        val contrastDb: Double,
+        val widthHz: Double? = null,
+    )
+
+    fun searchCarrier(freqHz: DoubleArray, levelsDb: FloatArray, nearHz: Double): CarrierSearch {
+        val none = CarrierSearch(null, 0.0)
         val n = levelsDb.size
-        if (n < 10) return null
+        if (n < 10) return none
         val step = (freqHz[n - 1] - freqHz[0]) / (n - 1)
         // Smooth over about 300 kHz in power, so the block reads as one plateau.
         val half = maxOf(1, (150_000 / step).toInt())
@@ -239,24 +250,26 @@ object LteCalibration {
             if (c > 0) sm[i] = 10 * log10(acc / c)
         }
         val valid = sm.filter { !it.isNaN() }.sorted()
-        if (valid.size < 10) return null
+        if (valid.size < 10) return none
         val floor = valid[(valid.size * 0.1).toInt()]
         val top = valid[(valid.size * 0.95).toInt().coerceAtMost(valid.size - 1)]
-        if (top - floor < 10) return null
+        val contrast = top - floor
+        if (contrast < 10) return CarrierSearch(null, contrast)
         val thr = (floor + top) / 2
         fun above(i: Int) = !sm[i].isNaN() && sm[i] >= thr
         var start = (0 until n).minBy { abs(freqHz[it] - nearHz) }
         if (!above(start)) {
             val reach = (3_000_000 / step).toInt()
-            start = (0 until n).filter { above(it) && abs(it - start) <= reach }.minByOrNull { abs(it - start) } ?: return null
+            start = (0 until n).filter { above(it) && abs(it - start) <= reach }.minByOrNull { abs(it - start) }
+                ?: return CarrierSearch(null, contrast)
         }
         var lo = start; var hi = start
         while (lo > 0 && above(lo - 1)) lo--
         while (hi < n - 1 && above(hi + 1)) hi++
         val width = freqHz[hi] - freqHz[lo]
-        if (width < 1_000_000 || width > 20_000_000) return null
+        if (width < 1_000_000 || width > 20_000_000) return CarrierSearch(null, contrast, width)
         val centre = (freqHz[lo] + freqHz[hi]) / 2
-        return Math.round(centre / 100_000) * 100_000
+        return CarrierSearch(Math.round(centre / 100_000) * 100_000, contrast, width)
     }
 
     data class Correction(
