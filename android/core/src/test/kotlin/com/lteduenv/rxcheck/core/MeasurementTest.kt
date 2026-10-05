@@ -121,7 +121,10 @@ class MeasurementTest {
         val r = Settings().withProfile(Mode.REVERSE, Band.B3_30)
         assertNull(r.validate())
         assertTrue(r.stopMhz <= 1766.0)
-        assertNotNull(r.copy(centerMhz = 1760.0).validate())
+        // Past 1766 MHz is allowed now (harmonic reception) but flagged; past 2200 MHz is not.
+        assertNull(r.copy(centerMhz = 1760.0).validate())
+        assertTrue(r.copy(centerMhz = 1760.0).usesHarmonic)
+        assertNotNull(r.copy(centerMhz = 2190.0).validate())
         val (lo, hi) = r.channelHz()
         assertEquals(1735e6, lo, 1.0); assertEquals(1765e6, hi, 1.0)
     }

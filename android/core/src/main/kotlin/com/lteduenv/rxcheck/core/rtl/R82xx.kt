@@ -56,12 +56,22 @@ class R82xx(
         forceWrites = false
     }
 
-    /** Tunes the LO. Returns the actual RF frequency in Hz. Repeater must be open. */
+    /** LO harmonic in use for the last tune: 1 = direct, 5 = fifth-harmonic reception. */
+    var harmonic = 1
+        private set
+
+    /**
+     * Tunes the LO. Returns the actual RF frequency in Hz. Repeater must be open.
+     * Above [HARMONIC_ABOVE_HZ] the PLL cannot reach the LO, so (as the librtlsdr
+     * fork's harmonic mode) the PLL runs at LO/5 and the mixer's 5th harmonic
+     * does the conversion: same spectrum orientation, much lower conversion gain.
+     */
     fun setFrequency(freqHz: Long): Double {
         val upconvert = if (isBlogV4 && freqHz < 28_800_000L) 28_800_000L else 0L
         val lo = freqHz + upconvert + ifHz
         setMux(lo)
-        val actualLo = setPll(lo)
+        harmonic = if (freqHz > HARMONIC_ABOVE_HZ) HARMONIC else 1
+        val actualLo = setPll(lo / harmonic) * harmonic
         if (isBlogV4) {
             val want = if (freqHz <= 28_800_000L) 2 else if (freqHz < 250_000_000L) 1 else 0
             if (want != input) {
@@ -324,6 +334,9 @@ class R82xx(
         const val XTAL_HZ = 28_800_000L
         const val IF_HZ = 3_570_000L
         const val CHIP_ID = 0x69
+        /** Direct tuning limit; above it the 5th LO harmonic is used (experimental). */
+        const val HARMONIC_ABOVE_HZ = 1_766_000_000L
+        const val HARMONIC = 5
         /** librtlsdr's fixed manual-mode VGA setting (about 16 dB). */
         const val DEFAULT_VGA = 8
         private const val POINTERLESS_CHECKS = 3

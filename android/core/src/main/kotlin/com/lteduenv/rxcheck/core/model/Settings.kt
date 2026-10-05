@@ -87,7 +87,7 @@ data class Settings(
                 "RBW" to rbwKhz, "Offset" to offsetDb, "임계" to thresholdDb, "Ref Level" to refLevelDb, "dB/div" to dbPerDiv)
                 .filter { !it.second.isFinite() }.joinToString(", ") { it.first }
         spanMhz !in 0.05..MAX_SPAN_MHZ -> "Span 범위: 0.05–50 MHz"
-        startMhz < 24.0 || stopMhz > 1766.0 -> "측정 범위 전체가 24–1766 MHz 안이어야 합니다 (RTL-SDR V4 한계)"
+        startMhz < 24.0 || stopMhz > MAX_MHZ -> "측정 범위 전체가 24–2200 MHz 안이어야 합니다 (1766 MHz 이상은 하모닉 수신)"
         rbwKhz !in 0.1..300.0 -> "RBW 범위: 0.1–300 kHz"
         vbwKhz != null && (!vbwKhz.isFinite() || vbwKhz !in 0.001..300.0) -> "VBW 범위: 0.001–300 kHz 또는 AUTO"
         averages !in 1..256 -> "평균 횟수: 1–256"
@@ -132,8 +132,11 @@ data class Settings(
     /** VBW equivalent of the averaging in use (RBW / N), Hz. */
     fun vbwActualHz(sampleRate: Int = SAMPLE_RATE) = rbwActualHz(sampleRate) / effectiveAverages(sampleRate)
 
-    /** Largest span that stays inside 24–1766 MHz around the current centre. */
-    fun maxSpanAtCenter() = minOf(MAX_SPAN_MHZ, 2 * (centerMhz - 24.0), 2 * (1766.0 - centerMhz))
+    /** Largest span that stays inside 24–2200 MHz around the current centre. */
+    fun maxSpanAtCenter() = minOf(MAX_SPAN_MHZ, 2 * (centerMhz - 24.0), 2 * (MAX_MHZ - centerMhz))
+
+    /** Part of the span is above the direct tuning limit (5th-harmonic reception, experimental). */
+    val usesHarmonic get() = stopMhz > DIRECT_MAX_MHZ
 
     /** RX channel edges in Hz (the band preset's channel, which may differ from the span centre). */
     fun channelHz(): Pair<Double, Double> {
@@ -145,6 +148,8 @@ data class Settings(
         const val MAX_SPAN_MHZ = 50.0
         const val MAX_GAIN_STEP = 15
         const val SAMPLE_RATE = 2_400_000
+        const val DIRECT_MAX_MHZ = 1766.0
+        const val MAX_MHZ = 2200.0
 
         /** Every RBW the FFT can give at 2.4 MS/s (FFT 64..16384), widest first, kHz. */
         val RBW_CHOICES_KHZ: List<Double> = (6..14).map { 1.44 * SAMPLE_RATE / (1 shl it) / 1e3 }

@@ -120,12 +120,13 @@ fun SettingsDialog(current: Settings, onDismiss: () -> Unit, onApply: (Settings)
                                 }
                             }
                             val c = center.toDoubleOrNull(); val sp = span.toDoubleOrNull()
-                            if (c != null && c in 24.0..1766.0) {
+                            if (c != null && c in 24.0..Settings.MAX_MHZ) {
                                 val maxSpan = Settings(centerMhz = c).maxSpanAtCenter()
                                 Text("현재 Center에서 최대 SPAN ${maxSpan.f(2)} MHz", fontSize = 12.sp)
                                 if (sp != null && sp > 0) {
                                     Text("START ${(c - sp / 2).f(3)} · STOP ${(c + sp / 2).f(3)} MHz", fontSize = 12.sp)
-                                    if (sp > maxSpan) Text("수신 범위(24–1766 MHz)를 벗어납니다", color = Bad, fontSize = 12.sp)
+                                    if (sp > maxSpan) Text("수신 범위(24–2200 MHz)를 벗어납니다", color = Bad, fontSize = 12.sp)
+                                    if (c + sp / 2 > Settings.DIRECT_MAX_MHZ) Text("1766 MHz 이상은 하모닉 수신(실험): 레벨이 크게 낮고 다른 대역 영상이 섞일 수 있습니다", color = Warn, fontSize = 12.sp)
                                     val segs = SweepPlan.create(c * 1e6, sp * 1e6, (rbw.toDoubleOrNull() ?: 54.0) * 1e3).segments.size
                                     Text(if (segs == 1) "1구간 · 재동조 없이 연속 갱신 (가장 빠름)" else "${segs}구간 순차 스윕", fontSize = 12.sp, color = Dim)
                                 }

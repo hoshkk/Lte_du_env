@@ -563,7 +563,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
         val f = st.shown?.let { snapToPeak(it, freqHz, 300e3) } ?: freqHz
         val rbwHz = minOf(s.rbwActualHz(), 13_500.0)
         val span = SweepPlan.zoomSpanHz(rbwHz) / 1e6
-        val c = (f / 1e6).coerceIn(24.0 + span, 1766.0 - span)
+        val c = (f / 1e6).coerceIn(24.0 + span, Settings.MAX_MHZ - span)
         beforeZoom = s
         commit(s.copy(centerMhz = c, spanMhz = span, rbwKhz = rbwHz / 1e3, dcShift = true), clearTraces = true)
         _state.update { it.copy(zoomed = true) }
@@ -587,7 +587,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * B8 downlink (RX centre + 45 MHz duplex = 954.3 MHz): the band the site's
      * antenna actually transmits in, to confirm the dongle sees the site at all.
-     * B3 downlink (about 1.84 GHz) is above the RTL-SDR's 1766 MHz limit.
+     * B3 downlink (about 1.84 GHz) needs harmonic reception: see [showB3Downlink].
      */
     fun showB8Downlink() {
         val s = _state.value.settings
@@ -604,7 +604,7 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
         val st = _state.value
         val m = st.markers.firstOrNull { it.index == st.selectedMarker }?.freqHz
             ?: return "먼저 M${st.selectedMarker} 마커를 기준 신호의 봉우리에 놓으세요 (Peak 버튼)"
-        if (!actualMhz.isFinite() || actualMhz !in 24.0..1766.0) return "실제 주파수(MHz)를 확인하세요"
+        if (!actualMhz.isFinite() || actualMhz !in 24.0..Settings.DIRECT_MAX_MHZ) return "실제 주파수(MHz, 24–1766)를 확인하세요 · 하모닉 구간은 보정 기준으로 쓰지 마세요"
         val ppm = st.settings.ppmFor(m, actualMhz * 1e6)
         if (ppm !in -200..200) return "계산된 보정 ${ppm} ppm이 너무 큽니다 · 마커 위치나 주파수를 확인하세요"
         commit(st.settings.copy(ppm = ppm), clearTraces = true)
@@ -612,6 +612,18 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { s -> s.copy(markers = s.markers.map { if (it.index == s.selectedMarker) it.copy(freqHz = actualMhz * 1e6) else it },
             status = "주파수 보정 ${if (ppm > 0) "+" else ""}$ppm ppm 적용") }
         return null
+    }
+
+    /**
+     * B3 downlink (RX + 95 MHz duplex, about 1.83–1.86 GHz) through 5th-harmonic
+     * reception: experimental, for finding where the site transmits, not for levels.
+     */
+    fun showB3Downlink() {
+        val s = _state.value.settings
+        val b = s.band?.takeIf { it != Band.B8 } ?: Band.B3_20
+        val c = b.rxCenterMhz + 95.0
+        commit(s.copy(band = null, centerMhz = c, spanMhz = b.channelBwMhz + 10.0, channelBwMhz = b.channelBwMhz,
+            maxHold = true), clearTraces = true)
     }
 
     fun toggleSniffSound() = _state.update { it.copy(sniffSound = !it.sniffSound) }

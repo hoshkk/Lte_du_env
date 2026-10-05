@@ -130,6 +130,7 @@ object Evaluate {
                 if (s.channelPower) channel?.let { notes += "채널 전력 ${f1(it.totalDb)} dB" }
             }
         }
+        if (trace.plan.stopHz > 1_766e6) notes += "1766 MHz 이상은 하모닉 수신(실험) · 레벨은 직접 수신보다 크게 낮고(약 −15~−25 dB) 다른 대역 영상이 섞일 수 있음 · 비교·위치 찾기용"
         if (trace.meanRemoved) notes += "I/Q 평균 제거 적용 (중심 주파수 신호도 줄어듦)"
         if (trace.dcPatched) notes += "중심 3 bin 보간 적용 (보정값)"
         if (corrected != null) notes += "동글 신호 보정값은 별도 표시 (원본 아님)"

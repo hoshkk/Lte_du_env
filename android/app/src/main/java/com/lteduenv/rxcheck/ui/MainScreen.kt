@@ -175,6 +175,7 @@ private fun TopBar(
                 MenuItem("자가점검 · 속도 진단", true, close, onDiag)
                 MenuItem("마커로 주파수 보정 (ppm)", true, close, onCalib)
                 MenuItem("B8 하향(DL) 954.3 MHz 보기 (기지국 송신 확인)", true, close, vm::showB8Downlink)
+                MenuItem("B3 하향(DL) 보기 (실험 · 하모닉 수신)", true, close, vm::showB3Downlink)
                 MenuItem(if (state.sniff) "근접 탐색 끄기 (이전 설정으로)" else "근접 탐색 (커넥터에 대고 찾기)", true, close, vm::toggleSniff)
                 HorizontalDivider()
                 MenuItem("동글 자체 신호 기록 (안테나 분리 상태)", state.last != null, close, vm::recordInternal)
@@ -288,6 +289,7 @@ private fun ChartBox(state: UiState, vm: MeasureViewModel, modifier: Modifier) {
             val banner = when {
                 state.clipped -> "입력 과다 (클리핑) · Gain을 낮추거나 감쇠기를 쓰세요" to Bad
                 !state.running && state.live == null -> "▶ 측정 시작을 누르세요  ·  메뉴(⋮) → 데모로 미리보기" to Dim
+            s.usesHarmonic -> "1766 MHz 이상: 하모닉 수신(실험) · 레벨 참고용, 영상 섞일 수 있음" to Warn
                 state.error == null && state.running && state.status.startsWith("USB") -> state.status to Warn
                 else -> null
             }

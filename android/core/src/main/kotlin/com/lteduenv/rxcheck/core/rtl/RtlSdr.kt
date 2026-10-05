@@ -53,7 +53,7 @@ class RtlSdr private constructor(
     val usbStats: UsbStats get() = com.stats
 
     override fun tune(hz: Long): Boolean {
-        require(hz in MIN_HZ..MAX_HZ) { "주파수 범위: 24–1766 MHz" }
+        require(hz in MIN_HZ..MAX_HZ) { "주파수 범위: 24–2200 MHz (1766 MHz 이상은 하모닉 수신)" }
         com.setRepeater(true)
         tuner.setFrequency(hz)
         com.setRepeater(false)
@@ -157,7 +157,8 @@ class RtlSdr private constructor(
     companion object {
         const val XTAL_HZ = 28_800_000L
         const val MIN_HZ = 24_000_000L
-        const val MAX_HZ = 1_766_000_000L
+        /** 1766 MHz direct; up to here with the 5th LO harmonic (see [R82xx.setFrequency]). */
+        const val MAX_HZ = 2_200_000_000L
         const val DEFAULT_RATE = 2_400_000
 
         private fun align(n: Int) = (n + 511) / 512 * 512
