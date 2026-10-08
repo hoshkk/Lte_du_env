@@ -745,7 +745,8 @@ class MeasureViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadPreset(mode: Mode): String? {
         val p = store.loadPreset(mode) ?: return "${mode.title} 저장값이 없습니다"
-        commit(p, clearTraces = true)
+        // The ppm correction belongs to the dongle, not to a preset: keep the current one.
+        commit(p.copy(ppm = _state.value.settings.ppm), clearTraces = true)
         return null
     }
 
